@@ -145,7 +145,10 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
 (defun p2s-post-below-point-to-all-services ()
   "Post contents below point to the end of buffer to all configured services."
   (interactive)
-  (p2s-post-region-to-all-services (point) (point-max)))
+  (let ((next-line-pos (save-excursion
+                         (forward-line 1)
+                         (line-beginning-position))))
+    (p2s-post-region-to-all-services next-line-pos (point-max))))
 
 ;;;###autoload
 (defun p2s-setup-keybindings ()
