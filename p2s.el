@@ -113,7 +113,7 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   (message "Sending post to all services..."))
 
 (defun p2s-post-from-minibuffer-to-all ()
-  "ミニバッファからテキストを入力して、すべてのサービスに同時投稿する。"
+  "Input text from minibuffer and post simultaneously to all services."
   (interactive)
   (let ((text (read-string "Post to all services: ")))
     (if (zerop (length (string-trim text)))
@@ -122,7 +122,7 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
         (p2s-post-text-to-all-services text)))))
 
 (defun p2s-configure-services ()
-  "投稿したいソーシャルメディアサービスを設定する。"
+  "Set the social media services you want to post to."
   (interactive)
   (let* ((available-services (mapcar #'car p2s-service-commands))
          (chosen-services
@@ -137,9 +137,15 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
 
 ;;;###autoload
 (defun p2s-post-buffer-to-all-services ()
-  "現在のバッファの内容をすべてのサービスに投稿する。"
+  "Post the contents of current buffer to all configured services."
   (interactive)
   (p2s-post-region-to-all-services (point-min) (point-max)))
+
+;;;###autoload
+(defun p2s-post-below-point-to-all-services ()
+  "Post contents below point to the end of buffer to all configured services."
+  (interactive)
+  (p2s-post-region-to-all-services (point) (point-max)))
 
 ;;;###autoload
 (defun p2s-setup-keybindings ()
@@ -147,6 +153,7 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   (interactive)
   (global-set-key (kbd "C-c p r") 'p2s-post-region-to-all-services)
   (global-set-key (kbd "C-c p m") 'p2s-post-from-minibuffer-to-all)
+  (global-set-key (kbd "C-c p b") 'p2s-post-below-point-to-all-services)
   (global-set-key (kbd "C-c p c") 'p2s-configure-services)
   (message "p2s keybindings set up"))
 
