@@ -95,7 +95,7 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
 `p2s-org-capture-key'がnilの場合は何もしません。"
   (when (and p2s-org-capture-key (fboundp 'org-capture))
     (with-temp-buffer
-      (insert text)
+      (insert (string-trim text))
       (set-mark (point-min))
       (goto-char (point-max))
       (activate-mark)
