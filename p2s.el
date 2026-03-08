@@ -94,8 +94,11 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   "TEXTを`org-capture'を使って保存する。
 `p2s-org-capture-key'がnilの場合は何もしません。"
   (when (and p2s-org-capture-key (fboundp 'org-capture))
-    (org-store-link-props :initial text)
-    (let ((org-capture-link-is-already-stored t))
+    (with-temp-buffer
+      (insert text)
+      (set-mark (point-min))
+      (goto-char (point-max))
+      (activate-mark)
       (condition-case err
           (org-capture nil p2s-org-capture-key)
         (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
