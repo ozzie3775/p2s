@@ -94,7 +94,8 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   "TEXTを`org-capture'を使って保存する。
 `p2s-org-capture-key'がnilの場合は何もしません。"
   (when (and p2s-org-capture-key (fboundp 'org-capture))
-    (let ((org-capture-initial text))
+    (let ((org-store-link-plist (list :initial text))
+          (org-capture-link-is-already-stored t))
       (condition-case err
           (org-capture nil p2s-org-capture-key)
         (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
@@ -163,27 +164,31 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
         (message "Empty text, nothing to post")
       (when (p2s-check-length text)
         (p2s-post-text-to-all-services text)
-        (let ((kill-buffer-query-functions nil))
-          (kill-buffer (current-buffer))
-          (delete-window))))))
+        (set-buffer-modified-p nil)
+        (quit-window t)))))
 
 (defun p2s-post-mode-cancel ()
   "Cancel editing and kill the buffer."
   (interactive)
   (when (or (not (buffer-modified-p))
             (yes-or-no-p "Discard post? "))
-    (let ((kill-buffer-query-functions nil))
-      (kill-buffer (current-buffer))
-      (delete-window)
-      (message "Post cancelled."))))
+    (set-buffer-modified-p nil)
+    (quit-window t)
+    (message "Post cancelled.")))
 
 ;;;###autoload
 (defun p2s-compose-post ()
   "Open a buffer to compose a post to all services."
   (interactive)
-  (let ((buf (generate-new-buffer "*p2s-compose*")))
-    (switch-to-buffer-other-window buf)
-    (p2s-post-mode)))
+  (let ((buf (get-buffer-create "*p2s-compose*")))
+    (with-current-buffer buf
+      (unless (derived-mode-p 'p2s-post-mode)
+        (p2s-post-mode))
+      (when (> (buffer-size) 0)
+        (when (yes-or-no-p "Existing content found in *p2s-compose*. Clear it? ")
+          (erase-buffer)
+          (set-buffer-modified-p nil))))
+    (switch-to-buffer-other-window buf)))
 
 (defun p2s-configure-services ()
   "Set the social media services you want to post to."
