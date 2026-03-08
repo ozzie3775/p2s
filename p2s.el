@@ -64,7 +64,15 @@
   :type 'integer
   :group 'p2s)
 
+(defcustom p2s-org-capture-key nil
+  "投稿ログに使用するorg-captureのテンプレートキー（例: \"s\"）。
+nil（デフォルト）の場合はログを保存しません。"
+  :type '(choice (const :tag "Disable logging" nil)
+                 (string :tag "Capture template key"))
+  :group 'p2s)
+
 (defun p2s-check-length (text)
+
   "TEXTの長さを確認し、最大文字数を超えている場合はエラーを出力する。"
   (let ((len (length text)))
     (when (> len p2s-max-length)
@@ -82,10 +90,22 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
       (when (p2s-check-length text)
         (p2s-post-text-to-all-services text)))))
 
+(defun p2s--log-post (text)
+  "TEXTを`org-capture'を使って保存する。
+`p2s-org-capture-key'がnilの場合は何もしません。"
+  (when (and p2s-org-capture-key (fboundp 'org-capture))
+    (let ((org-capture-initial text))
+      (condition-case err
+          (org-capture nil p2s-org-capture-key)
+        (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
+
 (defun p2s-post-text-to-all-services (text)
   "テキストをすべてのサービスに投稿する。"
   (let ((success-count 0)
         (service-count (length p2s-services)))
+
+    ;; ログに保存
+    (p2s--log-post text)
 
     (dolist (service p2s-services)
       (let* ((command (cdr (assq service p2s-service-commands)))
@@ -120,6 +140,50 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
         (message "Empty text, nothing to post")
       (when (p2s-check-length text)
         (p2s-post-text-to-all-services text)))))
+
+(defvar p2s-post-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c C-c") #'p2s-post-mode-finish)
+    (define-key map (kbd "C-c C-k") #'p2s-post-mode-cancel)
+    map)
+  "Keymap for `p2s-post-mode'.")
+
+(define-derived-mode p2s-post-mode text-mode "p2s-post"
+  "Major mode for composing a post to multiple SNS services.
+\\{p2s-post-mode-map}"
+  (setq-local header-line-format
+              (substitute-command-keys
+               "Edit post and press \\[p2s-post-mode-finish] to post, \\[p2s-post-mode-cancel] to cancel.")))
+
+(defun p2s-post-mode-finish ()
+  "Finish editing and post the content."
+  (interactive)
+  (let ((text (buffer-substring-no-properties (point-min) (point-max))))
+    (if (zerop (length (string-trim text)))
+        (message "Empty text, nothing to post")
+      (when (p2s-check-length text)
+        (p2s-post-text-to-all-services text)
+        (let ((kill-buffer-query-functions nil))
+          (kill-buffer (current-buffer))
+          (delete-window))))))
+
+(defun p2s-post-mode-cancel ()
+  "Cancel editing and kill the buffer."
+  (interactive)
+  (when (or (not (buffer-modified-p))
+            (yes-or-no-p "Discard post? "))
+    (let ((kill-buffer-query-functions nil))
+      (kill-buffer (current-buffer))
+      (delete-window)
+      (message "Post cancelled."))))
+
+;;;###autoload
+(defun p2s-compose-post ()
+  "Open a buffer to compose a post to all services."
+  (interactive)
+  (let ((buf (generate-new-buffer "*p2s-compose*")))
+    (switch-to-buffer-other-window buf)
+    (p2s-post-mode)))
 
 (defun p2s-configure-services ()
   "Set the social media services you want to post to."
@@ -156,6 +220,7 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   (interactive)
   (global-set-key (kbd "C-c p r") 'p2s-post-region-to-all-services)
   (global-set-key (kbd "C-c p m") 'p2s-post-from-minibuffer-to-all)
+  (global-set-key (kbd "C-c p p") 'p2s-compose-post)
   (global-set-key (kbd "C-c p b") 'p2s-post-below-point-to-all-services)
   (global-set-key (kbd "C-c p c") 'p2s-configure-services)
   (message "p2s keybindings set up"))
