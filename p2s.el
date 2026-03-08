@@ -94,8 +94,8 @@ BEGIN ENDはリージョンの開始位置と終了位置。"
   "TEXTを`org-capture'を使って保存する。
 `p2s-org-capture-key'がnilの場合は何もしません。"
   (when (and p2s-org-capture-key (fboundp 'org-capture))
-    (let ((org-store-link-plist (list :initial text))
-          (org-capture-link-is-already-stored t))
+    (org-store-link-props :initial text)
+    (let ((org-capture-link-is-already-stored t))
       (condition-case err
           (org-capture nil p2s-org-capture-key)
         (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
