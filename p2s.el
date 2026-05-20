@@ -85,7 +85,7 @@ Throw `user-error' if the limit is exceeded."
       (goto-char (point-min))
       (while (not (eobp))
         (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
-          (if (string-match "^#+IMAGE:[\s\t]*\\(.+\\)$" line)
+          (if (string-match "^#\\+IMAGE:[\s\t]*\\(.+\\)$" line)
               (push (string-trim (match-string 1 line)) images)
             (push line text-lines))
           (forward-line 1))))
