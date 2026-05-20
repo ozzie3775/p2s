@@ -1,9 +1,10 @@
-;; p2s.el --- Post to multiple SNS services simultaneously -*- lexical-binding: t -*-
+;;; p2s.el --- Post to multiple SNS services simultaneously -*- lexical-binding: t -*-
 
 ;; Author: @ozzie3775
+;; URL: https://github.com/ozzie3775/p2s
 ;; Version: 0.1
 ;; Keywords: convenience
-;; Package-Requires: ((emacs "25.1") (cl-lib "0.5"))
+;; Package-Requires: ((emacs "25.1"))
 
 ;;; Commentary:
 ;; This package provides functions to post content to multiple social network
@@ -14,6 +15,9 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'dnd)
+(require 'crm)
+
+(declare-function org-capture "org-capture" (&optional goto keys))
 
 (defgroup p2s nil
   "Post to multiple SNS services simultaneously."
@@ -56,7 +60,7 @@ If nil (default), logging is disabled."
 Throw `user-error' if the limit is exceeded."
   (let ((len (length text)))
     (if (> len p2s-max-length)
-        (user-error "Post is too long (%d chars). Limit is %d"
+        (user-error "Post is too long (%d chars).  Limit is %d"
                     len p2s-max-length)
       t)))
 
@@ -74,7 +78,9 @@ Throw `user-error' if the limit is exceeded."
       (activate-mark)
       (condition-case err
           (org-capture nil p2s-org-capture-key)
-        (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
+        (error
+         (message "p2s: Org-capture failed: %s"
+                  (error-message-string err)))))))
 
 (defun p2s--extract-images (text)
   "Extract image paths from TEXT and return (clean-text . images)."
@@ -130,15 +136,18 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
                    (message "p2s: [%s] Posted successfully (%d/%d)"
                             svc success-count total-services)
                    (when (= success-count total-services)
-                     (message "p2s: Successfully posted to all %d services" total-services)))
+                     (message "p2s: Successfully posted to all %d services"
+                              total-services)))
                   ((string-match-p "finished\\|exited\\|error" event)
                    (message "p2s: [%s] Failed: %s (Status: %d)"
-                            svc (string-trim event) (process-exit-status process)))))))))))
-  (message "p2s: Sending post to %d services..." (length p2s-services)))
+                            svc
+                            (string-trim event)
+                            (process-exit-status process)))))))))))
+  (message "p2s: Sending post to %d services..." (length p2s-services))))
 
 ;;;###autoload
 (defun p2s-post-region-to-all-services (begin end)
-  "Post the current region to all services."
+  "Post the current region between BEGIN and END to all services."
   (interactive "r")
   (let ((text (buffer-substring-no-properties begin end)))
     (if (string-blank-p text)
@@ -215,7 +224,10 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
      ((executable-find "pngpaste")
       (setq success (zerop (call-process "pngpaste" nil nil nil file))))
      ((executable-find "xclip")
-      (setq success (zerop (call-process "xclip" nil nil nil "-selection" "clipboard" "-t" "image/png" "-o" file))))
+      (setq success
+            (zerop (call-process "xclip" nil nil nil
+                                 "-selection" "clipboard"
+                                 "-t" "image/png" "-o" file))))
      (t (message "p2s: No clipboard image tool found (install pngpaste or xclip)")))
     (if success
         (p2s-attach-image file)
@@ -280,15 +292,24 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
     (p2s-post-region-to-all-services start (point-max))))
 
 ;;;###autoload
+(defvar p2s-prefix-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "r") #'p2s-post-region-to-all-services)
+    (define-key map (kbd "m") #'p2s-post-from-minibuffer-to-all)
+    (define-key map (kbd "p") #'p2s-compose-post)
+    (define-key map (kbd "b") #'p2s-post-buffer-to-all-services)
+    (define-key map (kbd "c") #'p2s-configure-services)
+    map)
+  "Prefix keymap for p2s commands.")
+
+;;;###autoload
 (defun p2s-setup-keybindings ()
-  "Setup recommended keybindings for p2s."
+  "Setup recommended keybindings for p2s.
+By default, this binds `p2s-prefix-map' to a standard prefix.
+\\<p2s-prefix-map>"
   (interactive)
-  (global-set-key (kbd "C-c p r") #'p2s-post-region-to-all-services)
-  (global-set-key (kbd "C-c p m") #'p2s-post-from-minibuffer-to-all)
-  (global-set-key (kbd "C-c p p") #'p2s-compose-post)
-  (global-set-key (kbd "C-c p b") #'p2s-post-buffer-to-all-services)
-  (global-set-key (kbd "C-c p c") #'p2s-configure-services)
-  (message "p2s: Recommended keybindings are set up (C-c p ...)"))
+  (global-set-key (kbd "C-c C-p") p2s-prefix-map)
+  (message "p2s: Recommended keybindings are set up (C-c C-p ...)"))
 
 (provide 'p2s)
 ;;; p2s.el ends here
