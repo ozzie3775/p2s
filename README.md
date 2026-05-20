@@ -8,6 +8,7 @@
 - **Efficient Compose Buffer**: Reuses a dedicated `*p2s-compose*` buffer with automated window management.
 - **Length Validation**: Checks character length before posting to prevent API errors (default: 300 chars).
 - **Org-capture Integration**: Automatically logs posts into Org files using templates.
+- **Image Attachments**: Support for attaching images via `#+IMAGE:` syntax, drag-and-drop, and clipboard integration.
 
 ## Installation
 
@@ -62,6 +63,8 @@ To avoid extra empty lines, we recommend a template structure like **`* %U\n%i`*
   Opens the `*p2s-compose*` buffer to write your post.
   - `C-c C-c`: Post and close the window.
   - `C-c C-k`: Cancel and close the window.
+  - `C-c C-a`: Attach an image file.
+  - `C-c C-y`: Attach an image from the clipboard.
 - **`p2s-post-region-to-all-services` (`C-c p r`)**:
   Posts the active region.
 - **`p2s-post-from-minibuffer-to-all` (`C-c p m`)**:
@@ -70,6 +73,21 @@ To avoid extra empty lines, we recommend a template structure like **`* %U\n%i`*
   Posts the entire current buffer.
 - **`p2s-configure-services` (`C-c p c`)**:
   Interactively switch active services.
+
+## Image Attachments
+
+You can attach images to your posts using the `#+IMAGE:` syntax. Lines starting with `#+IMAGE:` are extracted as attachments and removed from the post body before sending.
+
+### Drag and Drop
+Drag an image file into the `*p2s-compose*` buffer. A `#+IMAGE: /path/to/image` line will be automatically inserted.
+
+### Clipboard Support
+Press `C-c C-y` (or `M-x p2s-attach-clipboard-image`) to save the image currently in your clipboard to a temporary file and insert the `#+IMAGE:` line.
+- Requires `pngpaste` on macOS.
+- Requires `xclip` on Linux.
+
+### Manual Attachment
+Press `C-c C-a` (or `M-x p2s-attach-image`) to select a file from your file system.
 
 ## Requirements
 

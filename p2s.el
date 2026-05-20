@@ -13,6 +13,7 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'dnd)
 
 (defgroup p2s nil
   "Post to multiple SNS services simultaneously."
@@ -29,6 +30,13 @@
     (toot . ("toot" "post")))
   "Commands for each service."
   :type '(alist :key-type symbol :value-type (repeat string))
+  :group 'p2s)
+
+(defcustom p2s-service-image-flags
+  '((bsky . "--image")
+    (toot . "--media"))
+  "Flags for attaching images for each service."
+  :type '(alist :key-type symbol :value-type string)
   :group 'p2s)
 
 (defcustom p2s-max-length 300
@@ -52,11 +60,15 @@ Throw `user-error' if the limit is exceeded."
                     len p2s-max-length)
       t)))
 
-(defun p2s--log-post (text)
-  "Log TEXT using `org-capture' if `p2s-org-capture-key' is set."
+(defun p2s--log-post (text &optional images)
+  "Log TEXT and IMAGES using `org-capture' if `p2s-org-capture-key' is set."
   (when (and p2s-org-capture-key (fboundp 'org-capture))
     (with-temp-buffer
       (insert (string-trim text))
+      (when images
+        (insert "\n\nFiles:\n")
+        (dolist (img images)
+          (insert (format "- %s\n" img))))
       (set-mark (point-min))
       (goto-char (point-max))
       (activate-mark)
@@ -64,28 +76,58 @@ Throw `user-error' if the limit is exceeded."
           (org-capture nil p2s-org-capture-key)
         (error (message "p2s: Org-capture failed: %s" (error-message-string err)))))))
 
-;;;###autoload
-(defun p2s-post-text-to-all-services (text)
-  "Post TEXT to all services defined in `p2s-services'."
-  (let ((success-count 0)
-        (service-count (length p2s-services)))
+(defun p2s--extract-images (text)
+  "Extract image paths from TEXT and return (clean-text . images)."
+  (let ((images nil)
+        (text-lines nil))
+    (with-temp-buffer
+      (insert text)
+      (goto-char (point-min))
+      (while (not (eobp))
+        (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
+          (if (string-match "^#+IMAGE:[\s\t]*\\(.+\\)$" line)
+              (push (string-trim (match-string 1 line)) images)
+            (push line text-lines))
+          (forward-line 1))))
+    (cons (string-trim (mapconcat #'identity (nreverse text-lines) "\n"))
+          (nreverse images))))
 
-    (p2s--log-post text)
+;;;###autoload
+(defun p2s-post-text-to-all-services (text &optional images)
+  "Post TEXT to all services defined in `p2s-services'.
+Optional IMAGES is a list of file paths to attach.
+If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
+  (let* ((extracted (p2s--extract-images text))
+         (clean-text (car extracted))
+         (all-images (append images (cdr extracted)))
+         (success-count 0)
+         (service-count (length p2s-services)))
+
+    (when (string-blank-p clean-text)
+      (user-error "Content is empty, nothing to post"))
+
+    (p2s-check-length clean-text)
+    (p2s--log-post clean-text all-images)
 
     (dolist (service p2s-services)
-      (let* ((command (cdr (assq service p2s-service-commands)))
+      (let* ((base-command (cdr (assq service p2s-service-commands)))
+             (img-flag (cdr (assq service p2s-service-image-flags)))
+             (img-args (when (and all-images img-flag)
+                         (cl-loop for img in all-images
+                                  append (list img-flag img))))
+             (command (append base-command img-args))
              (process-connection-type nil)
              (proc-name (format "p2s-%s-process" service))
              (buffer-name (format " *p2s-%s-output*" service))) ; Hidden buffer
 
-        (if (not command)
+        (if (not base-command)
             (message "p2s: Unknown service: %s" service)
           (let ((proc (apply #'start-process proc-name buffer-name command)))
-            (process-send-string proc text)
+            (process-send-string proc clean-text)
             (process-send-eof proc)
             (set-process-sentinel
              proc
-             (lambda (process event)
+             (lambda (_process event)
                (when (string-match-p "finished" event)
                  (cl-incf success-count)
                  (message "p2s: Posted to %s (%d/%d)"
@@ -101,8 +143,7 @@ Throw `user-error' if the limit is exceeded."
   (let ((text (buffer-substring-no-properties begin end)))
     (if (string-blank-p text)
         (user-error "Region is empty, nothing to post")
-      (when (p2s-check-length text)
-        (p2s-post-text-to-all-services text)))))
+      (p2s-post-text-to-all-services text))))
 
 ;;;###autoload
 (defun p2s-post-from-minibuffer-to-all ()
@@ -111,33 +152,68 @@ Throw `user-error' if the limit is exceeded."
   (let ((text (read-string "Post: ")))
     (if (string-blank-p text)
         (message "p2s: Nothing to post")
-      (when (p2s-check-length text)
-        (p2s-post-text-to-all-services text)))))
+      (p2s-post-text-to-all-services text))))
 
 (defvar p2s-post-mode-map
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "C-c C-c") #'p2s-post-mode-finish)
     (define-key map (kbd "C-c C-k") #'p2s-post-mode-cancel)
+    (define-key map (kbd "C-c C-a") #'p2s-attach-image)
+    (define-key map (kbd "C-c C-y") #'p2s-attach-clipboard-image)
     map)
   "Keymap for `p2s-post-mode'.")
+
+(defun p2s-dnd-func (url _action)
+  "Handle drag and drop of a file URL in `p2s-post-mode'."
+  (let ((file (dnd-get-local-file-name url)))
+    (when (and file (file-exists-p file))
+      (goto-char (point-max))
+      (unless (bolp) (insert "\n"))
+      (insert (format "#+IMAGE: %s\n" (expand-file-name file))))))
 
 (define-derived-mode p2s-post-mode text-mode "p2s-post"
   "Major mode for composing a post to multiple SNS services.
 \\{p2s-post-mode-map}"
   (setq-local header-line-format
               (substitute-command-keys
-               "Edit post and press \\[p2s-post-mode-finish] to post, \\[p2s-post-mode-cancel] to cancel.")))
+               "Edit post and press \\[p2s-post-mode-finish] to post, \\[p2s-post-mode-cancel] to cancel."))
+  (setq-local dnd-protocol-alist '(("^file:///" . p2s-dnd-func)
+                                   ("^file:" . p2s-dnd-func))))
+
+(defun p2s-attach-image (file)
+  "Attach an image FILE to the current post."
+  (interactive "fImage file: ")
+  (save-excursion
+    (goto-char (point-max))
+    (unless (bolp) (insert "\n"))
+    (insert (format "#+IMAGE: %s\n" (expand-file-name file)))))
+
+(defun p2s-attach-clipboard-image ()
+  "Save image from clipboard and attach it."
+  (interactive)
+  (let* ((dir (expand-file-name "p2s-images" temporary-file-directory))
+         (_ (make-directory dir t))
+         (filename (format-time-string "p2s-%Y%m%d-%H%M%S.png"))
+         (file (expand-file-name filename dir))
+         (success nil))
+    (cond
+     ((executable-find "pngpaste")
+      (setq success (zerop (call-process "pngpaste" nil nil nil file))))
+     ((executable-find "xclip")
+      (setq success (zerop (call-process "xclip" nil nil nil "-selection" "clipboard" "-t" "image/png" "-o" file))))
+     (t (message "p2s: No clipboard image tool found (install pngpaste or xclip)")))
+    (if success
+        (p2s-attach-image file)
+      (when (executable-find "pngpaste")
+        (message "p2s: No image in clipboard")))))
 
 (defun p2s-post-mode-finish ()
   "Finish editing and post the content."
   (interactive)
   (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-    (if (string-blank-p text)
-        (user-error "Content is empty, nothing to post")
-      (when (p2s-check-length text)
-        (p2s-post-text-to-all-services text)
-        (set-buffer-modified-p nil)
-        (quit-window t)))))
+    (p2s-post-text-to-all-services text)
+    (set-buffer-modified-p nil)
+    (quit-window t)))
 
 (defun p2s-post-mode-cancel ()
   "Cancel editing and discard the buffer."
