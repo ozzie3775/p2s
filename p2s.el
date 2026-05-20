@@ -78,18 +78,12 @@ Throw `user-error' if the limit is exceeded."
 
 (defun p2s--extract-images (text)
   "Extract image paths from TEXT and return (clean-text . images)."
-  (let ((images nil)
-        (text-lines nil))
-    (with-temp-buffer
-      (insert text)
-      (goto-char (point-min))
-      (while (not (eobp))
-        (let ((line (buffer-substring-no-properties (line-beginning-position) (line-end-position))))
-          (if (string-match "^#\\+IMAGE:[\s\t]*\\(.+\\)$" line)
-              (push (string-trim (match-string 1 line)) images)
-            (push line text-lines))
-          (forward-line 1))))
-    (cons (string-trim (mapconcat #'identity (nreverse text-lines) "\n"))
+  (let (images clean-lines)
+    (dolist (line (split-string text "\n"))
+      (if (string-match "^#\\+IMAGE:[\s\t]*\\(.+\\)$" line)
+          (push (string-trim (match-string 1 line)) images)
+        (push line clean-lines)))
+    (cons (string-trim (mapconcat #'identity (nreverse clean-lines) "\n"))
           (nreverse images))))
 
 ;;;###autoload
@@ -101,7 +95,7 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
          (clean-text (car extracted))
          (all-images (append images (cdr extracted)))
          (success-count 0)
-         (service-count (length p2s-services)))
+         (total-services (length p2s-services)))
 
     (when (string-blank-p clean-text)
       (user-error "Content is empty, nothing to post"))
@@ -118,7 +112,7 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
              (command (append base-command img-args))
              (process-connection-type nil)
              (proc-name (format "p2s-%s-process" service))
-             (buffer-name (format " *p2s-%s-output*" service))) ; Hidden buffer
+             (buffer-name (format " *p2s-%s-output*" service)))
 
         (if (not base-command)
             (message "p2s: Unknown service: %s" service)
@@ -127,14 +121,20 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
             (process-send-eof proc)
             (set-process-sentinel
              proc
-             (lambda (_process event)
-               (when (string-match-p "finished" event)
-                 (cl-incf success-count)
-                 (message "p2s: Posted to %s (%d/%d)"
-                          service success-count service-count)
-                 (when (= success-count service-count)
-                   (message "p2s: Successfully posted to all %d services" service-count))))))))))
-  (message "p2s: Sending post to all services..."))
+             (lambda (process event)
+               (let ((svc service)) ; capture service name
+                 (cond
+                  ((and (string-match-p "finished" event)
+                        (zerop (process-exit-status process)))
+                   (cl-incf success-count)
+                   (message "p2s: [%s] Posted successfully (%d/%d)"
+                            svc success-count total-services)
+                   (when (= success-count total-services)
+                     (message "p2s: Successfully posted to all %d services" total-services)))
+                  ((string-match-p "finished\\|exited\\|error" event)
+                   (message "p2s: [%s] Failed: %s (Status: %d)"
+                            svc (string-trim event) (process-exit-status process)))))))))))
+  (message "p2s: Sending post to %d services..." (length p2s-services)))
 
 ;;;###autoload
 (defun p2s-post-region-to-all-services (begin end)
@@ -171,14 +171,29 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
       (unless (bolp) (insert "\n"))
       (insert (format "#+IMAGE: %s\n" (expand-file-name file))))))
 
+(defun p2s--update-header-line ()
+  "Update the header line with character count."
+  (let* ((text (buffer-substring-no-properties (point-min) (point-max)))
+         (extracted (p2s--extract-images text))
+         (clean-text (car extracted))
+         (len (length clean-text))
+         (limit p2s-max-length)
+         (color (if (> len limit) "red" "green")))
+    (setq header-line-format
+          (list
+           (substitute-command-keys
+            "Edit post (C-c C-c: Post, C-c C-k: Cancel) | ")
+           (propertize (format "Length: %d/%d" len limit)
+                       'face `(:foreground ,color :weight bold))))))
+
 (define-derived-mode p2s-post-mode text-mode "p2s-post"
   "Major mode for composing a post to multiple SNS services.
 \\{p2s-post-mode-map}"
-  (setq-local header-line-format
-              (substitute-command-keys
-               "Edit post and press \\[p2s-post-mode-finish] to post, \\[p2s-post-mode-cancel] to cancel."))
   (setq-local dnd-protocol-alist '(("^file:///" . p2s-dnd-func)
-                                   ("^file:" . p2s-dnd-func))))
+                                   ("^file:" . p2s-dnd-func)))
+  (add-hook 'post-command-hook #'p2s--update-header-line nil t)
+  (p2s--update-header-line))
+
 
 (defun p2s-attach-image (file)
   "Attach an image FILE to the current post."
