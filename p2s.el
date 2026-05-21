@@ -86,8 +86,10 @@ Throw `user-error' if the limit is exceeded."
   "Extract image paths from TEXT and return (clean-text . images)."
   (let (images clean-lines)
     (dolist (line (split-string text "\n"))
-      (if (string-match "^#\\+IMAGE:[\s\t]*\\(.+\\)$" line)
-          (push (string-trim (match-string 1 line)) images)
+      (if (string-match "^[ \t]*#\\+IMAGE\\(?::[ \t]*\\(.*?\\)\\)?[ \t]*$" line)
+          (let ((path (match-string 1 line)))
+            (when (and path (not (string-empty-p (string-trim path))))
+              (push (string-trim path) images)))
         (push line clean-lines)))
     (cons (string-trim (mapconcat #'identity (nreverse clean-lines) "\n"))
           (nreverse images))))
