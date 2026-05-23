@@ -16,6 +16,7 @@
 (require 'subr-x)
 (require 'dnd)
 (require 'crm)
+(require 'json)
 
 (declare-function org-capture "org-capture" (&optional goto keys))
 
@@ -31,7 +32,7 @@
 
 (defcustom p2s-service-commands
   '((bsky . ("bsky" "post" "--stdin"))
-    (toot . ("toot" "post")))
+    (toot . ("toot" "post" "--json")))
   "Commands for each service."
   :type '(alist :key-type symbol :value-type (repeat string))
   :group 'p2s)
@@ -40,6 +41,13 @@
   '((bsky . "--image")
     (toot . "--media"))
   "Flags for attaching images for each service."
+  :type '(alist :key-type symbol :value-type string)
+  :group 'p2s)
+
+(defcustom p2s-service-reply-flags
+  '((bsky . "-r")
+    (toot . "--reply-to"))
+  "Flags for replying to a post for each service."
   :type '(alist :key-type symbol :value-type string)
   :group 'p2s)
 
@@ -82,26 +90,84 @@ Throw `user-error' if the limit is exceeded."
          (message "p2s: Org-capture failed: %s"
                   (error-message-string err)))))))
 
+(defvar p2s-last-post-ids nil
+  "Alist of the last post IDs for each service.
+Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
+
+(defun p2s-reset-last-post-ids ()
+  "Reset the stored last post IDs for all services."
+  (interactive)
+  (setq p2s-last-post-ids nil)
+  (message "p2s: Last post IDs have been reset."))
+
+(defun p2s--extract-id (service output)
+  "Extract post ID for SERVICE from command OUTPUT."
+  (let ((case-fold-search t)
+        (trimmed-out (string-trim output)))
+    (cond
+     ((eq service 'bsky)
+      ;; Bluesky needs at:// URI.
+      (cond
+       ((string-match "\"uri\":[ \t]*\"\\(at://[^ \t\n\r\"]+\\)\"" trimmed-out)
+        (match-string 1 trimmed-out))
+       ((string-match "uri:[ \t]*\\(at://[^ \t\n\r]+\\)" trimmed-out)
+        (match-string 1 trimmed-out))
+       ;; Fallback for any at:// URI in the output
+       ((string-match "\\(at://[^ \t\n\r\"]+\\)" trimmed-out)
+        (match-string 1 trimmed-out))))
+     ((eq service 'toot)
+      ;; Use JSON parsing if possible
+      (or (condition-case nil
+              (let ((json-object-type 'alist)
+                    (start (string-match "{" trimmed-out)))
+                (if start
+                    (let ((data (json-read-from-string (substring trimmed-out start))))
+                      ;; Status ID is at the top level.
+                      ;; Account ID is nested inside 'account' object.
+                      (let ((id (cdr (assoc 'id data))))
+                        (cond
+                         ((numberp id) (number-to-string id))
+                         ((stringp id) id)
+                         (t nil))))
+                  ;; If no { is found, maybe it's just the ID string?
+                  (when (string-match "^\"?\\([0-9]+\\)\"?$" trimmed-out)
+                    (match-string 1 trimmed-out))))
+            (error nil))
+          ;; Regex fallbacks: try to find "id":"..." BEFORE "account":{
+          (when (string-match "\\`[^{]*{[^}]*?\"id\":[ \t]*\"\\([0-9]+\\)\"" trimmed-out)
+            (match-string 1 trimmed-out))
+          (when (string-match "\"id\":[ \t]*\"\\([0-9]+\\)\"" trimmed-out)
+            (match-string 1 trimmed-out))
+          (when (string-match "\\([0-9]\\{15,\\}\\)" trimmed-out)
+            (match-string 1 trimmed-out)))))))
+
 (defun p2s--extract-images (text)
-  "Extract image paths from TEXT and return (clean-text . images)."
-  (let (images clean-lines)
+  "Extract metadata and image paths from TEXT.
+Returns (clean-text images is-reply)."
+  (let (images clean-lines is-reply)
     (dolist (line (split-string text "\n"))
-      (if (string-match "^[ \t]*#\\+IMAGE\\(?::[ \t]*\\(.*?\\)\\)?[ \t]*$" line)
-          (let ((path (match-string 1 line)))
-            (when (and path (not (string-empty-p (string-trim path))))
-              (push (string-trim path) images)))
-        (push line clean-lines)))
-    (cons (string-trim (mapconcat #'identity (nreverse clean-lines) "\n"))
-          (nreverse images))))
+      (cond
+       ((string-match "^[ \t]*#\\+IMAGE\\(?::[ \t]*\\(.*?\\)\\)?[ \t]*$" line)
+        (let ((path (match-string 1 line)))
+          (when (and path (not (string-empty-p (string-trim path))))
+            (push (string-trim path) images))))
+       ((string-match "^[ \t]*#\\+REPLY:[ \t]*t" line)
+        (setq is-reply t))
+       (t (push line clean-lines))))
+    (list (string-trim (mapconcat #'identity (nreverse clean-lines) "\n"))
+          (nreverse images)
+          is-reply)))
 
 ;;;###autoload
 (defun p2s-post-text-to-all-services (text &optional images)
   "Post TEXT to all services defined in `p2s-services'.
 Optional IMAGES is a list of file paths to attach.
-If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
+If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES.
+If TEXT contains #+REPLY: t, it will reply to the last post if available."
   (let* ((extracted (p2s--extract-images text))
-         (clean-text (car extracted))
-         (all-images (append images (cdr extracted)))
+         (clean-text (nth 0 extracted))
+         (all-images (append images (nth 1 extracted)))
+         (is-reply (nth 2 extracted))
          (success-count 0)
          (total-services (length p2s-services)))
 
@@ -114,10 +180,15 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
     (dolist (service p2s-services)
       (let* ((base-command (cdr (assq service p2s-service-commands)))
              (img-flag (cdr (assq service p2s-service-image-flags)))
+             (reply-flag (cdr (assq service p2s-service-reply-flags)))
+             (last-id (cdr (assq service p2s-last-post-ids)))
              (img-args (when (and all-images img-flag)
                          (cl-loop for img in all-images
                                   append (list img-flag img))))
-             (command (append base-command img-args))
+             (reply-args (when (and is-reply last-id reply-flag)
+                           (message "p2s: [%s] Replying to: %s" service last-id)
+                           (list reply-flag last-id)))
+             (command (append base-command img-args reply-args))
              (process-connection-type nil)
              (proc-name (format "p2s-%s-process" service))
              (buffer-name (format " *p2s-%s-output*" service)))
@@ -125,26 +196,36 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
         (if (not base-command)
             (message "p2s: Unknown service: %s" service)
           (let ((proc (apply #'start-process proc-name buffer-name command)))
+            (message "p2s: [%s] Executing: %s" service (mapconcat #'identity command " "))
             (process-send-string proc clean-text)
             (process-send-eof proc)
             (set-process-sentinel
              proc
              (lambda (process event)
-               (let ((svc service)) ; capture service name
-                 (cond
-                  ((and (string-match-p "finished" event)
-                        (zerop (process-exit-status process)))
-                   (cl-incf success-count)
-                   (message "p2s: [%s] Posted successfully (%d/%d)"
-                            svc success-count total-services)
-                   (when (= success-count total-services)
-                     (message "p2s: Successfully posted to all %d services"
-                              total-services)))
-                  ((string-match-p "finished\\|exited\\|error" event)
-                   (message "p2s: [%s] Failed: %s (Status: %d)"
-                            svc
-                            (string-trim event)
-                            (process-exit-status process)))))))))))
+               (let ((svc service)
+                     (buf (process-buffer process)))
+                 (with-current-buffer buf
+                   (let ((output (buffer-string)))
+                     (cond
+                      ((and (string-match-p "finished" event)
+                            (zerop (process-exit-status process)))
+                       (cl-incf success-count)
+                       ;; Extract ID from output
+                       (let ((id (p2s--extract-id svc output)))
+                         (if id
+                             (progn
+                               (setf (alist-get svc p2s-last-post-ids) id)
+                               (message "p2s: [%s] Successfully extracted and stored ID: %s" svc id)
+                               (message "p2s: Current IDs: %s" p2s-last-post-ids))
+                           (message "p2s: [%s] Warning: Could not extract post ID from output\nOutput: %s" svc output)))
+                       (message "p2s: [%s] Posted successfully (%d/%d)"
+                                svc success-count total-services)
+                       (when (= success-count total-services)
+                         (message "p2s: Successfully posted to all %d services"
+                                  total-services)))
+                      ((string-match-p "finished\\|exited\\|error" event)
+                       (message "p2s: [%s] Failed: %s\nOutput: %s"
+                                svc (string-trim event) (string-trim output)))))))))))))
   (message "p2s: Sending post to %d services..." (length p2s-services))))
 
 ;;;###autoload
@@ -186,7 +267,8 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
   "Update the header line with character count."
   (let* ((text (buffer-substring-no-properties (point-min) (point-max)))
          (extracted (p2s--extract-images text))
-         (clean-text (car extracted))
+         (clean-text (nth 0 extracted))
+         (is-reply (nth 2 extracted))
          (len (length clean-text))
          (limit p2s-max-length)
          (color (if (> len limit) "red" "green")))
@@ -195,7 +277,9 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
            (substitute-command-keys
             "Edit post (C-c C-c: Post, C-c C-k: Cancel) | ")
            (propertize (format "Length: %d/%d" len limit)
-                       'face `(:foreground ,color :weight bold))))))
+                       'face `(:foreground ,color :weight bold))
+           (when is-reply
+             (propertize " [REPLY MODE]" 'face '(:foreground "orange" :weight bold)))))))
 
 (define-derived-mode p2s-post-mode text-mode "p2s-post"
   "Major mode for composing a post to multiple SNS services.
@@ -267,6 +351,18 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
         (set-buffer-modified-p nil)))
     (switch-to-buffer-other-window buf)))
 
+;;;###autoload
+(defun p2s-compose-reply ()
+  "Open a buffer to compose a reply to the last post."
+  (interactive)
+  (unless p2s-last-post-ids
+    (user-error "No previous post found to reply to"))
+  (p2s-compose-post)
+  (with-current-buffer (get-buffer "*p2s-compose*")
+    (save-excursion
+      (goto-char (point-min))
+      (insert "#+REPLY: t\n\n"))))
+
 (defun p2s-configure-services ()
   "Set the social media services you want to post to."
   (interactive)
@@ -299,8 +395,10 @@ If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES."
     (define-key map (kbd "r") #'p2s-post-region-to-all-services)
     (define-key map (kbd "m") #'p2s-post-from-minibuffer-to-all)
     (define-key map (kbd "p") #'p2s-compose-post)
+    (define-key map (kbd "R") #'p2s-compose-reply)
     (define-key map (kbd "b") #'p2s-post-buffer-to-all-services)
     (define-key map (kbd "c") #'p2s-configure-services)
+    (define-key map (kbd "C") #'p2s-reset-last-post-ids)
     map)
   "Prefix keymap for p2s commands.")
 
