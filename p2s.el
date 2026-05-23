@@ -359,9 +359,8 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
     (user-error "No previous post found to reply to"))
   (p2s-compose-post)
   (with-current-buffer (get-buffer "*p2s-compose*")
-    (save-excursion
-      (goto-char (point-min))
-      (insert "#+REPLY: t\n\n"))))
+    (goto-char (point-min))
+    (insert "#+REPLY: t\n")))
 
 (defun p2s-configure-services ()
   "Set the social media services you want to post to."
