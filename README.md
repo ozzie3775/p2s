@@ -5,9 +5,10 @@
 ## Features
 
 - **Simultaneous Posting**: Execute multiple CLI commands (like `bsky` or `toot`) at once.
-- **Efficient Compose Buffer**: Reuses a dedicated `*p2s-compose*` buffer with automated window management.
+- **Efficient Compose Buffer**: Reuses a dedicated `*p2s-compose*` buffer with automated window management and real-time character count.
+- **Threading & Replies**: Support for replying to your last post using `#+REPLY: t` or `p2s-compose-reply`.
 - **Length Validation**: Checks character length before posting to prevent API errors (default: 300 chars).
-- **Org-capture Integration**: Automatically logs posts into Org files using templates.
+- **Org-capture Integration**: Automatically logs posts into Org files using templates, including image paths.
 - **Image Attachments**: Support for attaching images via `#+IMAGE:` syntax, drag-and-drop, and clipboard integration.
 
 ## Installation
@@ -18,7 +19,7 @@
 ```elisp
 (require 'p2s)
 
-;; Enable recommended keybindings (C-c p ...)
+;; Enable recommended keybindings (C-c C-p ...)
 (p2s-setup-keybindings)
 
 ;; Enable logging (set your preferred capture template key)
@@ -34,10 +35,20 @@ By default, it uses `bsky` and `toot` CLI commands.
 ```elisp
 (setq p2s-service-commands
       '((bsky . ("bsky" "post" "--stdin"))
-        (toot . ("toot" "post"))))
+        (toot . ("toot" "post" "--json"))))
 
 ;; Select which services to post to
 (setq p2s-services '(bsky toot))
+
+;; Customize image attachment flags
+(setq p2s-service-image-flags
+      '((bsky . "--image")
+        (toot . "--media")))
+
+;; Customize reply flags
+(setq p2s-service-reply-flags
+      '((bsky . "-r")
+        (toot . "--reply-to")))
 ```
 
 ### Org-capture Logging
@@ -57,22 +68,35 @@ To avoid extra empty lines, we recommend a template structure like **`* %U\n%i`*
 
 ## Usage
 
-### Commands
+### Commands (prefixed by `C-c C-p`)
 
-- **`p2s-compose-post` (`C-c p p`)**:
+- **`p2s-compose-post` (`p`)**:
   Opens the `*p2s-compose*` buffer to write your post.
   - `C-c C-c`: Post and close the window.
   - `C-c C-k`: Cancel and close the window.
   - `C-c C-a`: Attach an image file.
   - `C-c C-y`: Attach an image from the clipboard.
-- **`p2s-post-region-to-all-services` (`C-c p r`)**:
+- **`p2s-compose-reply` (`R`)**:
+  Opens the compose buffer with `#+REPLY: t` to reply to the last successful post.
+- **`p2s-post-region-to-all-services` (`r`)**:
   Posts the active region.
-- **`p2s-post-from-minibuffer-to-all` (`C-c p m`)**:
+- **`p2s-post-from-minibuffer-to-all` (`m`)**:
   Post directly from the minibuffer.
-- **`p2s-post-buffer-to-all-services` (`C-c p b`)**:
+- **`p2s-post-buffer-to-all-services` (`b`)**:
   Posts the entire current buffer.
-- **`p2s-configure-services` (`C-c p c`)**:
+- **`p2s-configure-services` (`c`)**:
   Interactively switch active services.
+- **`p2s-reset-last-post-ids` (`C`)**:
+  Clear the stored last post IDs.
+
+## Threading and Replies
+
+You can create threads or reply to your previous posts.
+
+1.  **Automatic**: Use `M-x p2s-compose-reply` (`C-c C-p R`). It automatically inserts `#+REPLY: t` at the top of the buffer.
+2.  **Manual**: Add `#+REPLY: t` anywhere in your post content.
+
+`p2s` stores the ID/URI of the last successful post for each service in `p2s-last-post-ids`.
 
 ## Image Attachments
 
