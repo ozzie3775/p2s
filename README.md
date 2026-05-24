@@ -48,7 +48,7 @@ By default, it uses `bsky` and `toot` CLI commands.
 ;; Customize reply flags
 (setq p2s-service-reply-flags
       '((bsky . "-r")
-        (toot . "--reply-to")))
+        (toot . "--reply-last")))
 ```
 
 ### Org-capture Logging

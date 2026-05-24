@@ -48,7 +48,7 @@
 ;; リプライ用のフラグをカスタマイズ
 (setq p2s-service-reply-flags
       '((bsky . "-r")
-        (toot . "--reply-to")))
+        (toot . "--reply-last")))
 ```
 
 ### Org-capture ログの設定

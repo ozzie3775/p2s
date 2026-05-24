@@ -46,8 +46,9 @@
 
 (defcustom p2s-service-reply-flags
   '((bsky . "-r")
-    (toot . "--reply-to"))
-  "Flags for replying to a post for each service."
+    (toot . "--reply-last"))
+  "Flags for replying to a post for each service.
+If the flag is \"--reply-last\", it will be used without an ID argument."
   :type '(alist :key-type symbol :value-type string)
   :group 'p2s)
 
@@ -133,10 +134,10 @@ Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
                   (when (string-match "^\"?\\([0-9]+\\)\"?$" trimmed-out)
                     (match-string 1 trimmed-out))))
             (error nil))
-          ;; Regex fallbacks: try to find "id":"..." BEFORE "account":{
-          (when (string-match "\\`[^{]*{[^}]*?\"id\":[ \t]*\"\\([0-9]+\\)\"" trimmed-out)
+          ;; Regex fallbacks: try to find "id":"..." or "id":... BEFORE "account":{
+          (when (string-match "\\`[^{]*{[^}]*?\"id\":[ \t]*\"?\\([0-9]+\\)\"?" trimmed-out)
             (match-string 1 trimmed-out))
-          (when (string-match "\"id\":[ \t]*\"\\([0-9]+\\)\"" trimmed-out)
+          (when (string-match "\"id\":[ \t]*\"?\\([0-9]+\\)\"?" trimmed-out)
             (match-string 1 trimmed-out))
           (when (string-match "\\([0-9]\\{15,\\}\\)" trimmed-out)
             (match-string 1 trimmed-out)))))))
@@ -178,31 +179,39 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
     (p2s--log-post clean-text all-images)
 
     (dolist (service p2s-services)
-      (let* ((base-command (cdr (assq service p2s-service-commands)))
-             (img-flag (cdr (assq service p2s-service-image-flags)))
-             (reply-flag (cdr (assq service p2s-service-reply-flags)))
-             (last-id (cdr (assq service p2s-last-post-ids)))
+      (let* ((svc service)
+             (base-command (cdr (assq svc p2s-service-commands)))
+             (img-flag (cdr (assq svc p2s-service-image-flags)))
+             (reply-flag (cdr (assq svc p2s-service-reply-flags)))
+             (last-id (cdr (assq svc p2s-last-post-ids)))
              (img-args (when (and all-images img-flag)
                          (cl-loop for img in all-images
                                   append (list img-flag img))))
-             (reply-args (when (and is-reply last-id reply-flag)
-                           (message "p2s: [%s] Replying to: %s" service last-id)
-                           (list reply-flag last-id)))
+             (reply-args (when (and is-reply reply-flag)
+                           (if (string= reply-flag "--reply-last")
+                               (progn
+                                 (message "p2s: [%s] Replying using --reply-last" svc)
+                                 (list reply-flag))
+                             (when last-id
+                               (message "p2s: [%s] Replying to: %s" svc last-id)
+                               (list reply-flag last-id)))))
              (command (append base-command img-args reply-args))
              (process-connection-type nil)
-             (proc-name (format "p2s-%s-process" service))
-             (buffer-name (format " *p2s-%s-output*" service)))
+             (proc-name (format "p2s-%s-process" svc))
+             (buffer-name (format " *p2s-%s-output*" svc)))
 
         (if (not base-command)
-            (message "p2s: Unknown service: %s" service)
+            (message "p2s: Unknown service: %s" svc)
+          (with-current-buffer (get-buffer-create buffer-name)
+            (erase-buffer))
           (let ((proc (apply #'start-process proc-name buffer-name command)))
-            (message "p2s: [%s] Executing: %s" service (mapconcat #'identity command " "))
+            (message "p2s: [%s] Executing: %s" svc (mapconcat #'identity command " "))
             (process-send-string proc clean-text)
             (process-send-eof proc)
             (set-process-sentinel
              proc
              (lambda (process event)
-               (let ((svc service)
+               (let ((svc svc)
                      (buf (process-buffer process)))
                  (with-current-buffer buf
                    (let ((output (buffer-string)))
@@ -214,7 +223,9 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
                        (let ((id (p2s--extract-id svc output)))
                          (if id
                              (progn
-                               (setf (alist-get svc p2s-last-post-ids) id)
+                               (setq p2s-last-post-ids
+                                     (cons (cons svc id)
+                                           (cl-remove svc p2s-last-post-ids :key #'car)))
                                (message "p2s: [%s] Successfully extracted and stored ID: %s" svc id)
                                (message "p2s: Current IDs: %s" p2s-last-post-ids))
                            (message "p2s: [%s] Warning: Could not extract post ID from output\nOutput: %s" svc output)))
