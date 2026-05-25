@@ -76,14 +76,19 @@ Throw `user-error' if the limit is exceeded."
 (defun p2s--log-post (text &optional images)
   "Log TEXT and IMAGES using `org-capture' if `p2s-org-capture-key' is set."
   (when (and p2s-org-capture-key (fboundp 'org-capture))
-    (with-temp-buffer
-      (insert (string-trim text))
-      (when images
-        (insert "\n\nFiles:\n")
-        (dolist (img images)
-          (insert (format "- %s\n" img))))
+    (let ((log-text (with-temp-buffer
+                      (insert (string-trim text))
+                      (when images
+                        (insert "\n\nFiles:\n")
+                        (dolist (img images)
+                          (insert (format "- %s\n" img))))
+                      (buffer-string))))
       (condition-case err
-          (org-capture nil p2s-org-capture-key)
+          (if (fboundp 'org-capture-string)
+              (org-capture-string log-text p2s-org-capture-key)
+            (with-temp-buffer
+              (insert log-text)
+              (org-capture nil p2s-org-capture-key)))
         (error
          (message "p2s: Org-capture failed: %s"
                   (error-message-string err)))))))
