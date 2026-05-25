@@ -88,14 +88,53 @@ Throw `user-error' if the limit is exceeded."
          (message "p2s: Org-capture failed: %s"
                   (error-message-string err)))))))
 
+(defcustom p2s-save-file (locate-user-emacs-file "p2s-last-post-ids")
+  "File to save `p2s-last-post-ids' for persistence across sessions.
+If nil, persistence is disabled."
+  :type '(choice (const :tag "Disable persistence" nil)
+                 file)
+  :group 'p2s)
+
 (defvar p2s-last-post-ids nil
   "Alist of the last post IDs for each service.
 Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
+
+(defun p2s-save-last-post-ids ()
+  "Save `p2s-last-post-ids' to `p2s-save-file'."
+  (when p2s-save-file
+    (condition-case err
+        (let ((dir (file-name-directory p2s-save-file)))
+          (when dir
+            (make-directory dir t))
+          (with-temp-file p2s-save-file
+            (let ((print-length nil)
+                  (print-level nil))
+              (insert ";; -*- lisp-data -*-\n")
+              (prin1 p2s-last-post-ids (current-buffer)))))
+      (error
+       (message "p2s: Failed to save last post IDs: %s"
+                (error-message-string err))))))
+
+(defun p2s-load-last-post-ids ()
+  "Load `p2s-last-post-ids' from `p2s-save-file'."
+  (interactive)
+  (when (and p2s-save-file (file-exists-p p2s-save-file))
+    (condition-case err
+        (with-temp-buffer
+          (insert-file-contents p2s-save-file)
+          (setq p2s-last-post-ids (read (current-buffer))))
+      (error
+       (message "p2s: Failed to load last post IDs: %s"
+                (error-message-string err))))))
+
+;; Load saved IDs immediately when the package is loaded
+(p2s-load-last-post-ids)
 
 (defun p2s-reset-last-post-ids ()
   "Reset the stored last post IDs for all services."
   (interactive)
   (setq p2s-last-post-ids nil)
+  (p2s-save-last-post-ids)
   (message "p2s: Last post IDs have been reset."))
 
 (defun p2s--extract-id (service output)
@@ -238,6 +277,7 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
                           (setq p2s-last-post-ids
                                 (cons (cons s id)
                                       (cl-remove s p2s-last-post-ids :key #'car)))
+                          (p2s-save-last-post-ids)
                           (message "p2s: [%s] Successfully extracted and stored ID: %s" s id))
                       (message "p2s: [%s] Warning: Could not extract post ID from output\nOutput: %s" s out)))
                   (message "p2s: [%s] Posted successfully (%d/%d)" s success-count total-services)

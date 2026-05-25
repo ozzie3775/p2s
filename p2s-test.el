@@ -56,4 +56,22 @@
       (should (equal (p2s--build-command 'test nil t)
                      '("testcmd" "post" "--reply-last"))))))
 
+(ert-deftest p2s-test-persistence ()
+  "Test that last post IDs can be saved and loaded from a file."
+  (let* ((temp-file (make-temp-file "p2s-test-ids"))
+         (p2s-save-file temp-file)
+         (p2s-last-post-ids '((bsky . "at://test1") (toot . "test2"))))
+    (unwind-protect
+        (progn
+          ;; Save current IDs to temp file
+          (p2s-save-last-post-ids)
+          ;; Clear active variable
+          (setq p2s-last-post-ids nil)
+          ;; Load back
+          (p2s-load-last-post-ids)
+          ;; Check if restored correctly
+          (should (equal p2s-last-post-ids '((bsky . "at://test1") (toot . "test2")))))
+      (when (file-exists-p temp-file)
+        (delete-file temp-file)))))
+
 (provide 'p2s-test)
