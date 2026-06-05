@@ -1,6 +1,6 @@
 # p2s.el --- 複数 SNS サービスへの同時投稿
 
-`p2s.el` は、Bluesky や Mastodon などの複数のソーシャルメディアサービスへ Emacs から同時に投稿するためのパッケージです。投稿内容は `org-capture` を利用して自動的にログとして保存することも可能です。
+`p2s.el` は、Bluesky や Mastodon などの複数のソーシャルメディアサービスへ Emacs から同時に投稿するためのパッケージです。
 
 ## 主な機能
 
@@ -8,7 +8,6 @@
 - **効率的な投稿バッファ**: 専用の `*p2s-compose*` バッファを再利用。ウィンドウ管理の自動化に加え、リアルタイムの文字数カウントを表示。
 - **スレッド・リプライ**: `#+REPLY: t` 記法や `p2s-compose-reply` を使用した、直前の投稿への返信（スレッド作成）に対応。
 - **文字数チェック**: 投稿前に文字数を検証し、エラーを防止（デフォルト 300 文字）。
-- **Org-capture 連携**: 投稿した内容を Org-mode のテンプレート（`%i`）に流し込み、日付ツリー等に自動記録。画像パスも記録に含まれます。
 - **画像投稿**: `#+IMAGE:` 記法、ドラッグ＆ドロップ、クリップボードからの貼り付けによる画像添付に対応。
 
 ## インストール
@@ -21,9 +20,6 @@
 
 ;; 推奨キーバインドを有効化 (C-c C-p ...)
 (p2s-setup-keybindings)
-
-;; 投稿ログを有効にする場合（例: "s" というテンプレートキーを使用）
-(setq p2s-org-capture-key "s")
 ```
 
 ## 設定
@@ -49,21 +45,6 @@
 (setq p2s-service-reply-flags
       '((bsky . "-r")
         (toot . "--reply-last")))
-```
-
-### Org-capture ログの設定
-
-`p2s-org-capture-key` を設定すると、投稿時に `org-capture` が実行されます。投稿内容はテンプレート変数 `%i` に渡されます。
-
-空行を防ぐため、テンプレートの定義は **`* %U\n%i`** のように記述することをおすすめします。
-
-```elisp
-(setq p2s-org-capture-key "s")
-
-;; org-capture-templates の設定例
-(setq org-capture-templates
-      '(("s" "SNS Post Log" entry (file+olp+datetree "~/org/posts.org")
-         "* %U\n%i" :immediate-finish t :prepend t)))
 ```
 
 ## 使い方
@@ -106,15 +87,14 @@
 `*p2s-compose*` バッファに画像ファイルをドラッグ＆ドロップすると、`#+IMAGE: /path/to/image` という行が自動的に挿入されます。
 
 ### クリップボードからの貼り付け
-`C-c C-y` (または `M-x p2s-attach-clipboard-image`) を実行すると、クリップボードにある画像を一時ファイルとして保存し、`#+IMAGE:` 行を挿入します。
+`C-c C-y` (or `M-x p2s-attach-clipboard-image`) を実行すると、クリップボードにある画像を一時ファイルとして保存し、`#+IMAGE:` 行を挿入します。
 - macOS では `pngpaste` が必要です。
 - Linux では `xclip` が必要です。
 
 ### ファイル選択
-`C-c C-a` (または `M-x p2s-attach-image`) でファイルを選択して添付できます。
+`C-c C-a` (or `M-x p2s-attach-image`) でファイルを選択して添付できます。
 
 ## 注意事項
 
 - 各サービスの外部コマンド（`bsky`, `toot` など）がインストールされ、PATH が通っている必要があります。
 - 文字数制限（`p2s-max-length`）を超えた場合、`user-error` で投稿がブロックされます。
-- `org-capture` 連携時、投稿テキストの末尾の不要な改行は自動で削除（trim）されます。

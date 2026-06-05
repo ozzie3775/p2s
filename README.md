@@ -1,6 +1,6 @@
 # p2s.el --- Post to multiple SNS services simultaneously
 
-`p2s.el` is an Emacs Lisp package for posting content to multiple social media services (Bluesky, Mastodon, etc.) simultaneously. It also supports automatic logging of your posts using `org-capture`.
+`p2s.el` is an Emacs Lisp package for posting content to multiple social media services (Bluesky, Mastodon, etc.) simultaneously.
 
 ## Features
 
@@ -8,7 +8,6 @@
 - **Efficient Compose Buffer**: Reuses a dedicated `*p2s-compose*` buffer with automated window management and real-time character count.
 - **Threading & Replies**: Support for replying to your last post using `#+REPLY: t` or `p2s-compose-reply`.
 - **Length Validation**: Checks character length before posting to prevent API errors (default: 300 chars).
-- **Org-capture Integration**: Automatically logs posts into Org files using templates, including image paths.
 - **Image Attachments**: Support for attaching images via `#+IMAGE:` syntax, drag-and-drop, and clipboard integration.
 
 ## Installation
@@ -21,9 +20,6 @@
 
 ;; Enable recommended keybindings (C-c C-p ...)
 (p2s-setup-keybindings)
-
-;; Enable logging (set your preferred capture template key)
-(setq p2s-org-capture-key "s")
 ```
 
 ## Configuration
@@ -49,21 +45,6 @@ By default, it uses `bsky` and `toot` CLI commands.
 (setq p2s-service-reply-flags
       '((bsky . "-r")
         (toot . "--reply-last")))
-```
-
-### Org-capture Logging
-
-When `p2s-org-capture-key` is set, `org-capture` is triggered upon posting. The post content is passed to the `%i` template variable.
-
-To avoid extra empty lines, we recommend a template structure like **`* %U\n%i`**.
-
-```elisp
-(setq p2s-org-capture-key "s")
-
-;; Example org-capture-templates
-(setq org-capture-templates
-      '(("s" "SNS Post Log" entry (file+olp+datetree "~/org/posts.org")
-         "* %U\n%i" :immediate-finish t :prepend t)))
 ```
 
 ## Usage
@@ -117,4 +98,3 @@ Press `C-c C-a` (or `M-x p2s-attach-image`) to select a file from your file syst
 
 - External CLI tools (e.g., `bsky`, `toot`) must be installed and available in your PATH.
 - Posts exceeding `p2s-max-length` will be blocked with a `user-error`.
-- Trailing whitespace/newlines are automatically trimmed before logging to Org-mode.

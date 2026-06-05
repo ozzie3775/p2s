@@ -18,8 +18,6 @@
 (require 'crm)
 (require 'json)
 
-(declare-function org-capture "org-capture" (&optional goto keys))
-
 (defgroup p2s nil
   "Post to multiple SNS services simultaneously."
   :group 'communication
@@ -57,13 +55,6 @@ If the flag is \"--reply-last\", it will be used without an ID argument."
   :type 'integer
   :group 'p2s)
 
-(defcustom p2s-org-capture-key nil
-  "Org-capture template key for logging posts (e.g., \"s\").
-If nil (default), logging is disabled."
-  :type '(choice (const :tag "Disable logging" nil)
-                 (string :tag "Capture template key"))
-  :group 'p2s)
-
 (defun p2s-check-length (text)
   "Check if TEXT length is within `p2s-max-length'.
 Throw `user-error' if the limit is exceeded."
@@ -72,26 +63,6 @@ Throw `user-error' if the limit is exceeded."
         (user-error "Post is too long (%d chars).  Limit is %d"
                     len p2s-max-length)
       t)))
-
-(defun p2s--log-post (text &optional images)
-  "Log TEXT and IMAGES using `org-capture' if `p2s-org-capture-key' is set."
-  (when (and p2s-org-capture-key (fboundp 'org-capture))
-    (let ((log-text (with-temp-buffer
-                      (insert (string-trim text))
-                      (when images
-                        (insert "\n\nFiles:\n")
-                        (dolist (img images)
-                          (insert (format "- %s\n" img))))
-                      (buffer-string))))
-      (condition-case err
-          (if (fboundp 'org-capture-string)
-              (org-capture-string log-text p2s-org-capture-key)
-            (with-temp-buffer
-              (insert log-text)
-              (org-capture nil p2s-org-capture-key)))
-        (error
-         (message "p2s: Org-capture failed: %s"
-                  (error-message-string err)))))))
 
 (defcustom p2s-save-file (locate-user-emacs-file "p2s-last-post-ids")
   "File to save `p2s-last-post-ids' for persistence across sessions.
@@ -252,7 +223,6 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
       (user-error "Content is empty, nothing to post"))
 
     (p2s-check-length clean-text)
-    (p2s--log-post clean-text all-images)
 
     (dolist (service p2s-services)
       (let* ((svc service)
