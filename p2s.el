@@ -228,13 +228,17 @@ Loading lazily lets users set `p2s-save-file' after `require'."
            (and (string-match "https?://[^ \t\n]+/\\([0-9]+\\)\\b" trimmed-out)
                 (match-string 1 trimmed-out)))))))
 
+(defconst p2s--image-line-regexp
+  "^[ \t]*#\\+IMAGE\\(?::[ \t]*\\(.*?\\)\\)?[ \t]*$"
+  "Regexp matching a #+IMAGE: line.  Group 1 is the image path.")
+
 (defun p2s--parse-post-content (text)
   "Extract metadata and image paths from TEXT.
 Returns (clean-text images is-reply)."
   (let (images clean-lines is-reply)
     (dolist (line (split-string text "\n"))
       (cond
-       ((string-match "^[ \t]*#\\+IMAGE\\(?::[ \t]*\\(.*?\\)\\)?[ \t]*$" line)
+       ((string-match p2s--image-line-regexp line)
         (let ((path (match-string 1 line)))
           (when (and path (not (string-empty-p (string-trim path))))
             (push (string-trim path) images))))
@@ -415,7 +419,9 @@ has finished, where both are lists of service symbols."
     (when (and file (file-exists-p file))
       (goto-char (point-max))
       (unless (bolp) (insert "\n"))
-      (insert (format "#+IMAGE: %s\n" (expand-file-name file))))))
+      (insert (format "#+IMAGE: %s\n" (expand-file-name file)))
+      (p2s--update-image-previews)
+      nil)))
 
 (defvar-local p2s--retry-services nil
   "Services that failed on the last post from this compose buffer.
@@ -444,13 +450,69 @@ When non-nil, `p2s-post-mode-finish' posts only to these services.")
                                      (mapconcat #'symbol-name p2s--retry-services ", "))
                              'face '(:foreground "red" :weight bold)))))))))
 
+(defcustom p2s-image-preview t
+  "Non-nil means show attached images in `p2s-post-mode' buffers.
+Images are shown below each #+IMAGE: line on graphical displays."
+  :type 'boolean
+  :group 'p2s)
+
+(defcustom p2s-image-preview-max-height 200
+  "Maximum height in pixels of image previews in `p2s-post-mode'."
+  :type 'integer
+  :group 'p2s)
+
+(defvar-local p2s--image-preview-state nil
+  "Buffer state when previews were last updated.
+A cons of `buffer-chars-modified-tick' and `p2s-image-preview'.")
+
+(defun p2s--image-preview-string (file)
+  "Return a string that shows a preview of FILE on the next line."
+  (concat
+   "\n"
+   (cond
+    ((not (file-exists-p file))
+     (propertize (format "[Image not found: %s]" file) 'face 'error))
+    ((display-graphic-p)
+     (let ((image (ignore-errors
+                    (create-image file nil nil
+                                  :max-height p2s-image-preview-max-height))))
+       (if image
+           (propertize " " 'display image)
+         (propertize "[Cannot display image]" 'face 'warning))))
+    (t ""))))
+
+(defun p2s--update-image-previews (&optional force)
+  "Show a preview below each #+IMAGE: line in the current buffer.
+Do nothing if neither the buffer nor `p2s-image-preview' has changed
+since the last update, unless FORCE is non-nil."
+  (let ((state (cons (buffer-chars-modified-tick) p2s-image-preview)))
+    (when (or force (not (equal state p2s--image-preview-state)))
+      (setq p2s--image-preview-state state)
+      (remove-overlays (point-min) (point-max) 'p2s-image-preview t)
+      (when p2s-image-preview
+        (save-excursion
+          (save-match-data
+            (goto-char (point-min))
+            (while (re-search-forward p2s--image-line-regexp nil t)
+              (let ((path (match-string-no-properties 1)))
+                (when (and path (not (string-empty-p (string-trim path))))
+                  (let ((ov (make-overlay (line-beginning-position)
+                                          (line-end-position))))
+                    (overlay-put ov 'p2s-image-preview t)
+                    (overlay-put ov 'evaporate t)
+                    (overlay-put ov 'after-string
+                                 (p2s--image-preview-string
+                                  (expand-file-name (string-trim path))))))))))))))
+
 (define-derived-mode p2s-post-mode text-mode "p2s-post"
   "Major mode for composing a post to multiple SNS services.
 \\{p2s-post-mode-map}"
   (setq-local dnd-protocol-alist '(("^file:///" . p2s-dnd-func)
                                    ("^file:" . p2s-dnd-func)))
   (add-hook 'post-command-hook #'p2s--update-header-line nil t)
-  (p2s--update-header-line))
+  (add-hook 'post-command-hook #'p2s--update-image-previews nil t)
+  (p2s--update-header-line)
+  (p2s--update-image-previews))
 
 
 (defun p2s-attach-image (file)
@@ -459,7 +521,8 @@ When non-nil, `p2s-post-mode-finish' posts only to these services.")
   (save-excursion
     (goto-char (point-max))
     (unless (bolp) (insert "\n"))
-    (insert (format "#+IMAGE: %s\n" (expand-file-name file)))))
+    (insert (format "#+IMAGE: %s\n" (expand-file-name file))))
+  (p2s--update-image-previews))
 
 (defun p2s-attach-clipboard-image ()
   "Save image from clipboard and attach it."

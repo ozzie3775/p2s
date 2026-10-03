@@ -107,6 +107,17 @@ Press `C-c C-y` (or `M-x p2s-attach-clipboard-image`) to save the image currentl
 ### Manual Attachment
 Press `C-c C-a` (or `M-x p2s-attach-image`) to select a file from your file system.
 
+### Image Preview
+In graphical Emacs, a thumbnail of each attached image is shown below its `#+IMAGE:` line, so you can check that you attached the right image before posting. If the file does not exist, an error message is shown instead. Deleting the line removes the attachment and its preview.
+
+```elisp
+;; Change the maximum height of previews (in pixels)
+(setq p2s-image-preview-max-height 300)
+
+;; Disable previews
+(setq p2s-image-preview nil)
+```
+
 ## Requirements
 
 - External CLI tools (e.g., `bsky`, `toot`) must be installed and available in your PATH.

@@ -285,4 +285,63 @@ COMMANDS is an alist of (SERVICE . COMMAND-LIST)."
                      (make-string 100 ?b))
              '(toot)))))
 
+(defun p2s-test-preview-strings ()
+  "Return the after-strings of image preview overlays in the current buffer."
+  (mapcar (lambda (ov) (overlay-get ov 'after-string))
+          (sort (cl-remove-if-not
+                 (lambda (ov) (overlay-get ov 'p2s-image-preview))
+                 (overlays-in (point-min) (point-max)))
+                (lambda (a b) (< (overlay-start a) (overlay-start b))))))
+
+(ert-deftest p2s-test-image-preview ()
+  "Test that a preview is shown below each #+IMAGE: line."
+  (let ((img (make-temp-file "p2s-test" nil ".png"))
+        (p2s-image-preview t))
+    (unwind-protect
+        (with-temp-buffer
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) t))
+                    ((symbol-function 'create-image)
+                     (lambda (file &rest _) (list 'image :file file))))
+            (p2s-post-mode)
+            (insert "hello\n")
+            (p2s-attach-image img)
+            (goto-char (point-max))
+            (insert "#+IMAGE: /no/such/image.png\n")
+            (p2s--update-image-previews)
+            (let ((strings (p2s-test-preview-strings)))
+              (should (= (length strings) 2))
+              ;; Existing file: shown as an image
+              (should (equal (get-text-property 1 'display (nth 0 strings))
+                             (list 'image :file img)))
+              ;; Missing file: shown as an error message
+              (should (string-match-p "Image not found: /no/such/image.png"
+                                      (nth 1 strings))))
+            ;; Removing the line removes its preview
+            (goto-char (point-min))
+            (re-search-forward "^#\\+IMAGE: /no/such")
+            (delete-region (line-beginning-position) (1+ (line-end-position)))
+            (p2s--update-image-previews)
+            (should (= (length (p2s-test-preview-strings)) 1))
+            ;; Turning previews off removes them
+            (let ((p2s-image-preview nil))
+              (p2s--update-image-previews)
+              (should (null (p2s-test-preview-strings))))
+            ;; Erasing the buffer leaves no previews behind
+            (p2s--update-image-previews)
+            (erase-buffer)
+            (should (null (p2s-test-preview-strings)))))
+      (delete-file img))))
+
+(ert-deftest p2s-test-image-preview-text-terminal ()
+  "Test that no image is shown on a text terminal."
+  (let ((img (make-temp-file "p2s-test" nil ".png"))
+        (p2s-image-preview t))
+    (unwind-protect
+        (with-temp-buffer
+          (cl-letf (((symbol-function 'display-graphic-p) (lambda (&rest _) nil)))
+            (p2s-post-mode)
+            (p2s-attach-image img)
+            (should (equal (p2s-test-preview-strings) '("\n")))))
+      (delete-file img))))
+
 (provide 'p2s-test)
