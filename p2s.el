@@ -51,18 +51,94 @@ If the flag is \"--reply-last\", it will be used without an ID argument."
   :group 'p2s)
 
 (defcustom p2s-max-length 300
-  "Maximum character length for a post."
+  "Maximum length of a post for services not in `p2s-service-max-lengths'."
   :type 'integer
   :group 'p2s)
 
-(defun p2s-check-length (text)
-  "Check if TEXT length is within `p2s-max-length'.
-Throw `user-error' if the limit is exceeded."
-  (let ((len (length text)))
-    (if (> len p2s-max-length)
-        (user-error "Post is too long (%d chars).  Limit is %d"
-                    len p2s-max-length)
-      t)))
+(defcustom p2s-service-max-lengths
+  '((bsky . 300)
+    (toot . 500))
+  "Maximum length of a post for each service.
+Change the value for `toot' if your Mastodon instance has another limit."
+  :type '(alist :key-type symbol :value-type integer)
+  :group 'p2s)
+
+(defcustom p2s-service-length-functions
+  '((bsky . p2s-count-graphemes)
+    (toot . p2s-count-mastodon-length))
+  "Functions that count the length of a post for each service.
+Services not listed here use `p2s-count-graphemes'."
+  :type '(alist :key-type symbol :value-type function)
+  :group 'p2s)
+
+(defun p2s--grapheme-extend-p (char)
+  "Return non-nil if CHAR is part of the preceding grapheme cluster."
+  (or (memq (get-char-code-property char 'general-category) '(Mn Me))
+      (<= #xFE00 char #xFE0F)           ; Variation selectors
+      (<= #xE0100 char #xE01EF)         ; Variation selectors supplement
+      (<= #x1F3FB char #x1F3FF)         ; Emoji skin tone modifiers
+      (<= #xE0020 char #xE007F)))       ; Tags (subdivision flags)
+
+(defun p2s-count-graphemes (text)
+  "Return the approximate number of grapheme clusters in TEXT.
+Combining marks, variation selectors, emoji modifiers, ZWJ sequences
+and regional indicator pairs (flags) are counted as one character."
+  (let ((count 0)
+        (join-next nil)
+        (pending-ri nil))
+    (dolist (char (string-to-list text))
+      (cond
+       (join-next (setq join-next nil))
+       ((= char #x200D) (setq join-next t)) ; Zero width joiner
+       ((p2s--grapheme-extend-p char))
+       ((<= #x1F1E6 char #x1F1FF)           ; Regional indicators
+        (if pending-ri
+            (setq pending-ri nil)
+          (setq pending-ri t)
+          (cl-incf count)))
+       (t (cl-incf count)))
+      (unless (<= #x1F1E6 char #x1F1FF)
+        (setq pending-ri nil)))
+    count))
+
+(defconst p2s--mastodon-url-length 23
+  "Length that Mastodon counts for every URL.")
+
+(defun p2s-count-mastodon-length (text)
+  "Return the length of TEXT as counted by Mastodon.
+Each URL counts as `p2s--mastodon-url-length' characters, and a mention
+of a remote account (@user@domain) counts only the @user part."
+  (let ((url-placeholder (make-string p2s--mastodon-url-length ?x)))
+    (p2s-count-graphemes
+     (replace-regexp-in-string
+      "@\\([[:alnum:]_]+\\)@[[:alnum:]-]+\\(?:\\.[[:alnum:]-]+\\)+" "@\\1"
+      (replace-regexp-in-string "https?://[^ \t\n]+" url-placeholder text t t)
+      t))))
+
+(defun p2s--post-lengths (text services)
+  "Return a list of (SERVICE LENGTH LIMIT) of TEXT for each of SERVICES."
+  (mapcar (lambda (svc)
+            (list svc
+                  (funcall (or (cdr (assq svc p2s-service-length-functions))
+                               #'p2s-count-graphemes)
+                           text)
+                  (or (cdr (assq svc p2s-service-max-lengths))
+                      p2s-max-length)))
+          services))
+
+(defun p2s-check-length (text &optional services)
+  "Check that TEXT fits the length limit of every service in SERVICES.
+SERVICES defaults to `p2s-services'.
+Throw `user-error' if any limit is exceeded."
+  (let ((over (cl-remove-if-not
+               (lambda (entry) (> (nth 1 entry) (nth 2 entry)))
+               (p2s--post-lengths text (or services p2s-services)))))
+    (when over
+      (user-error "Post is too long: %s"
+                  (mapconcat (lambda (entry)
+                               (apply #'format "%s %d/%d" entry))
+                             over ", ")))
+    t))
 
 (defcustom p2s-save-file (locate-user-emacs-file "p2s-last-post-ids")
   "File to save `p2s-last-post-ids' for persistence across sessions.
@@ -136,7 +212,8 @@ Loading lazily lets users set `p2s-save-file' after `require'."
            (and (string-match "\\(at://[^ \t\n\r\"]+\\)" trimmed-out)
                 (match-string 1 trimmed-out))))
       ('toot
-       ;; Use JSON parsing if possible
+       ;; `toot post --json' prints the status as JSON.  Read the
+       ;; top-level "id", since the output also contains the account ID.
        (or (condition-case nil
                (let ((json-object-type 'alist)
                      (start (string-match "{" trimmed-out)))
@@ -147,18 +224,8 @@ Loading lazily lets users set `p2s-save-file' after `require'."
                       ((numberp id) (number-to-string id))
                       ((stringp id) id)))))
              (error nil))
-           (and (string-match "\\`[^{]*{[^}]*?\"id\":[ \t]*\"?\\([0-9]+\\)\"?" trimmed-out)
-                (match-string 1 trimmed-out))
-           (and (string-match "\"id\":[ \t]*\"?\\([0-9]+\\)\"?" trimmed-out)
-                (match-string 1 trimmed-out))
-           (and (string-match "id:[ \t]*\\([0-9]+\\)" trimmed-out)
-                (match-string 1 trimmed-out))
-           (and (string-match "\\([0-9]\\{15,\\}\\)" trimmed-out)
-                (match-string 1 trimmed-out))
-           ;; Last resort: any sequence of digits if it's the only thing or at the end
-           (and (string-match "\\([0-9]+\\)\\'" trimmed-out)
-                (match-string 1 trimmed-out))
-           (and (string-match "^\"?\\([0-9]+\\)\"?$" trimmed-out)
+           ;; Without --json, toot prints the URL of the status.
+           (and (string-match "https?://[^ \t\n]+/\\([0-9]+\\)\\b" trimmed-out)
                 (match-string 1 trimmed-out)))))))
 
 (defun p2s--parse-post-content (text)
@@ -248,7 +315,7 @@ has finished, where both are lists of service symbols."
     (when (string-blank-p clean-text)
       (user-error "Content is empty, nothing to post"))
 
-    (p2s-check-length clean-text)
+    (p2s-check-length clean-text services)
 
     (p2s--ensure-last-post-ids-loaded)
     (when is-reply
@@ -358,15 +425,18 @@ When non-nil, `p2s-post-mode-finish' posts only to these services.")
   "Update the header line with character count."
   (let* ((text (buffer-substring-no-properties (point-min) (point-max))))
     (pcase-let ((`(,clean-text _ ,is-reply) (p2s--parse-post-content text)))
-      (let* ((len (length clean-text))
-             (limit p2s-max-length)
-             (color (if (> len limit) "red" "green")))
+      (let ((lengths (p2s--post-lengths
+                      clean-text (or p2s--retry-services p2s-services))))
         (setq header-line-format
               (list
                (substitute-command-keys
-                "Edit post (C-c C-c: Post, C-c C-k: Cancel) | ")
-               (propertize (format "Length: %d/%d" len limit)
-                           'face `(:foreground ,color :weight bold))
+                "Edit post (C-c C-c: Post, C-c C-k: Cancel) |")
+               (mapconcat
+                (pcase-lambda (`(,svc ,len ,limit))
+                  (propertize (format " %s %d/%d" svc len limit)
+                              'face `(:foreground ,(if (> len limit) "red" "green")
+                                                  :weight bold)))
+                lengths "")
                (when is-reply
                  (propertize " [REPLY MODE]" 'face '(:foreground "orange" :weight bold)))
                (when p2s--retry-services

@@ -7,7 +7,7 @@
 - **Simultaneous Posting**: Execute multiple CLI commands (like `bsky` or `toot`) at once.
 - **Efficient Compose Buffer**: Reuses a dedicated `*p2s-compose*` buffer with automated window management and real-time character count.
 - **Threading & Replies**: Support for replying to your last post using `#+REPLY: t` or `p2s-compose-reply`.
-- **Length Validation**: Checks character length before posting to prevent API errors (default: 300 chars).
+- **Length Validation**: Checks the length for each service before posting, counted the way each service does (Bluesky: 300, Mastodon: 500 with URLs counted as 23 chars).
 - **Image Attachments**: Support for attaching images via `#+IMAGE:` syntax, drag-and-drop, and clipboard integration.
 
 ## Installation
@@ -48,6 +48,12 @@ By default, it uses `bsky` and `toot` CLI commands.
 (setq p2s-service-reply-flags
       '((bsky . "-r")
         (toot . "--reply-last")))
+
+;; Customize the length limit for each service
+;; (e.g. if your Mastodon instance allows longer posts)
+(setq p2s-service-max-lengths
+      '((bsky . 300)
+        (toot . 500)))
 ```
 
 ## Usage
@@ -102,4 +108,4 @@ Press `C-c C-a` (or `M-x p2s-attach-image`) to select a file from your file syst
 ## Requirements
 
 - External CLI tools (e.g., `bsky`, `toot`) must be installed and available in your PATH.
-- Posts exceeding `p2s-max-length` will be blocked with a `user-error`.
+- Posts exceeding the limit of any service (`p2s-service-max-lengths`) will be blocked with a `user-error`. Services not listed there use `p2s-max-length`.

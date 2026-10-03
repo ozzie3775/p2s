@@ -26,12 +26,17 @@
 
 (ert-deftest p2s-test-extract-id-toot ()
   "Test p2s--extract-id for Mastodon (toot)."
-  (let ((output "{\"id\": \"112490000000000000\", \"account\": {\"id\": \"1\", ...}}"))
+  ;; The top-level status ID, not the account ID
+  (let ((output "{\"account\": {\"id\": \"1\"}, \"id\": \"112490000000000000\"}"))
     (should (string= (p2s--extract-id 'toot output) "112490000000000000")))
   (let ((output "{\"id\": 123456789}"))
     (should (string= (p2s--extract-id 'toot output) "123456789")))
-  (let ((output "Post created with ID 987654321"))
-    (should (string= (p2s--extract-id 'toot output) "987654321"))))
+  ;; Status URL printed without --json
+  (let ((output "Toot posted: https://mastodon.example/@user/112490000000000001"))
+    (should (string= (p2s--extract-id 'toot output) "112490000000000001")))
+  ;; Unrelated numbers are not taken as an ID
+  (let ((output "Error 500: try again in 30 seconds"))
+    (should-not (p2s--extract-id 'toot output))))
 
 (ert-deftest p2s-test-build-command ()
   "Test p2s--build-command."
@@ -234,5 +239,48 @@ COMMANDS is an alist of (SERVICE . COMMAND-LIST)."
                       :type 'user-error)
         (should-error (p2s-compose-reply) :type 'user-error))
       (should-not started))))
+
+(ert-deftest p2s-test-count-graphemes ()
+  "Test grapheme counting."
+  (should (= (p2s-count-graphemes "hello") 5))
+  (should (= (p2s-count-graphemes "日本語") 3))
+  ;; e + combining acute accent
+  (should (= (p2s-count-graphemes "é") 1))
+  ;; Thumbs up + skin tone
+  (should (= (p2s-count-graphemes "\U0001F44D\U0001F3FD") 1))
+  ;; Family: man ZWJ woman ZWJ girl
+  (should (= (p2s-count-graphemes "\U0001F468‍\U0001F469‍\U0001F467") 1))
+  ;; Heart + variation selector
+  (should (= (p2s-count-graphemes "❤️") 1))
+  ;; Two flags (JP, US)
+  (should (= (p2s-count-graphemes "\U0001F1EF\U0001F1F5\U0001F1FA\U0001F1F8") 2)))
+
+(ert-deftest p2s-test-count-mastodon-length ()
+  "Test Mastodon length counting."
+  (should (= (p2s-count-mastodon-length "hi") 2))
+  ;; A URL counts as 23 characters
+  (should (= (p2s-count-mastodon-length
+              "see https://example.com/a/very/long/path/that/goes/on")
+             (+ 4 23)))
+  ;; A remote mention counts only the @user part
+  (should (= (p2s-count-mastodon-length "@alice@mastodon.example hi")
+             (length "@alice hi"))))
+
+(ert-deftest p2s-test-check-length ()
+  "Test per-service length checks."
+  (let ((p2s-service-max-lengths '((bsky . 300) (toot . 500)))
+        (p2s-service-length-functions '((bsky . p2s-count-graphemes)
+                                        (toot . p2s-count-mastodon-length)))
+        (p2s-max-length 10)
+        (text (make-string 400 ?a)))
+    (should (p2s-check-length text '(toot)))
+    (should-error (p2s-check-length text '(bsky toot)) :type 'user-error)
+    ;; Services not in the alist use `p2s-max-length'
+    (should-error (p2s-check-length "hello world" '(other)) :type 'user-error)
+    ;; A long URL fits Mastodon's limit
+    (should (p2s-check-length
+             (concat (make-string 470 ?a) " https://example.com/"
+                     (make-string 100 ?b))
+             '(toot)))))
 
 (provide 'p2s-test)
