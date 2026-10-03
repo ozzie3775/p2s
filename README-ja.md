@@ -80,7 +80,9 @@
 1.  **自動**: `M-x p2s-compose-reply` (`C-c p R`) を使用します。バッファの先頭に自動で `#+REPLY: t` が挿入されます。
 2.  **手動**: 投稿内容のどこかに `#+REPLY: t` という行を含めます。
 
-`p2s` は、各サービスへの投稿が成功した際の ID/URI を `p2s-last-post-ids` に保存して管理します。
+`p2s` は、各サービスへの投稿が成功した際の ID/URI を `p2s-last-post-ids` に保存して管理します。この ID は `p2s-save-file`（デフォルト: `~/.emacs.d/p2s-last-post-ids`）にも保存され、Emacs を再起動しても引き継がれます。`p2s-save-file` を `nil` にすると保存しません。
+
+返信先の投稿がないサービスがある場合（`p2s-reset-last-post-ids` の直後の Bluesky など）、どのサービスにも投稿しません。通常の投稿にするには `#+REPLY: t` の行を削除してください。
 
 ## 画像投稿
 

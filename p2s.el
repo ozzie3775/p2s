@@ -75,6 +75,9 @@ If nil, persistence is disabled."
   "Alist of the last post IDs for each service.
 Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
 
+(defvar p2s--loaded-save-file nil
+  "The value of `p2s-save-file' that `p2s-last-post-ids' was loaded from.")
+
 (defun p2s-save-last-post-ids ()
   "Save `p2s-last-post-ids' to `p2s-save-file'."
   (when p2s-save-file
@@ -94,6 +97,7 @@ Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
 (defun p2s-load-last-post-ids ()
   "Load `p2s-last-post-ids' from `p2s-save-file'."
   (interactive)
+  (setq p2s--loaded-save-file p2s-save-file)
   (when (and p2s-save-file (file-exists-p p2s-save-file))
     (condition-case err
         (with-temp-buffer
@@ -103,13 +107,18 @@ Example: ((bsky . \"at://did:...\") (toot . \"12345\"))")
        (message "p2s: Failed to load last post IDs: %s"
                 (error-message-string err))))))
 
-;; Load saved IDs immediately when the package is loaded
-(p2s-load-last-post-ids)
+(defun p2s--ensure-last-post-ids-loaded ()
+  "Load `p2s-last-post-ids' unless it is already loaded from `p2s-save-file'.
+Loading lazily lets users set `p2s-save-file' after `require'."
+  (when (and p2s-save-file
+             (not (equal p2s-save-file p2s--loaded-save-file)))
+    (p2s-load-last-post-ids)))
 
 (defun p2s-reset-last-post-ids ()
   "Reset the stored last post IDs for all services."
   (interactive)
   (setq p2s-last-post-ids nil)
+  (setq p2s--loaded-save-file p2s-save-file)
   (p2s-save-last-post-ids)
   (message "p2s: Last post IDs have been reset."))
 
@@ -168,6 +177,18 @@ Returns (clean-text images is-reply)."
     (list (string-trim (mapconcat #'identity (nreverse clean-lines) "\n"))
           (nreverse images)
           is-reply)))
+
+(defun p2s--services-unable-to-reply (services)
+  "Return the members of SERVICES that cannot reply to the last post.
+A service cannot reply if it has no reply flag, or if its flag needs
+a post ID and no ID is stored in `p2s-last-post-ids'."
+  (cl-remove-if
+   (lambda (svc)
+     (let ((reply-flag (cdr (assq svc p2s-service-reply-flags))))
+       (and reply-flag
+            (or (string= reply-flag "--reply-last")
+                (cdr (assq svc p2s-last-post-ids))))))
+   services))
 
 (defun p2s--build-command (svc images is-reply)
   "Build the command list for SVC.
@@ -228,6 +249,13 @@ has finished, where both are lists of service symbols."
       (user-error "Content is empty, nothing to post"))
 
     (p2s-check-length clean-text)
+
+    (p2s--ensure-last-post-ids-loaded)
+    (when is-reply
+      (let ((unable (p2s--services-unable-to-reply services)))
+        (when unable
+          (user-error "No previous post to reply to for %s; remove #+REPLY: t to post normally"
+                      (mapconcat #'symbol-name unable ", ")))))
 
     (cl-flet ((finish (svc ok)
                 (if ok (push svc succeeded) (push svc failed))
@@ -456,8 +484,11 @@ posts only to the failed services."
 (defun p2s-compose-reply ()
   "Open a buffer to compose a reply to the last post."
   (interactive)
-  (unless p2s-last-post-ids
-    (user-error "No previous post found to reply to"))
+  (p2s--ensure-last-post-ids-loaded)
+  (let ((unable (p2s--services-unable-to-reply p2s-services)))
+    (when unable
+      (user-error "No previous post to reply to for %s"
+                  (mapconcat #'symbol-name unable ", "))))
   (p2s-compose-post)
   (with-current-buffer (get-buffer "*p2s-compose*")
     (goto-char (point-min))

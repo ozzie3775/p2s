@@ -80,7 +80,9 @@ You can create threads or reply to your previous posts.
 1.  **Automatic**: Use `M-x p2s-compose-reply` (`C-c p R`). It automatically inserts `#+REPLY: t` at the top of the buffer.
 2.  **Manual**: Add `#+REPLY: t` anywhere in your post content.
 
-`p2s` stores the ID/URI of the last successful post for each service in `p2s-last-post-ids`.
+`p2s` stores the ID/URI of the last successful post for each service in `p2s-last-post-ids` and saves it to `p2s-save-file` (default: `~/.emacs.d/p2s-last-post-ids`) so it persists across sessions. Set `p2s-save-file` to `nil` to disable persistence.
+
+If a service has no previous post to reply to (for example, Bluesky right after `p2s-reset-last-post-ids`), the reply is not sent to any service. Remove the `#+REPLY: t` line to post normally.
 
 ## Image Attachments
 

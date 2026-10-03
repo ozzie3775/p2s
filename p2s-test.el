@@ -60,6 +60,7 @@
   "Test that last post IDs can be saved and loaded from a file."
   (let* ((temp-file (make-temp-file "p2s-test-ids"))
          (p2s-save-file temp-file)
+         (p2s--loaded-save-file nil)
          (p2s-last-post-ids '((bsky . "at://test1") (toot . "test2"))))
     (unwind-protect
         (progn
@@ -99,7 +100,8 @@ COMMANDS is an alist of (SERVICE . COMMAND-LIST)."
           (p2s-service-image-flags nil)
           (p2s-service-reply-flags nil)
           (p2s-last-post-ids nil)
-          (p2s-save-file nil))
+          (p2s-save-file nil)
+          (p2s--loaded-save-file nil))
      ,@body))
 
 (defun p2s-test-wait-for (pred)
@@ -191,5 +193,46 @@ COMMANDS is an alist of (SERVICE . COMMAND-LIST)."
               (p2s-test-wait-for (lambda () done)))
             (should (string= (buffer-string) "hello next")))
         (kill-buffer buf)))))
+
+(ert-deftest p2s-test-lazy-load ()
+  "Test that IDs are loaded from the current `p2s-save-file' on first use."
+  (let* ((temp-file (make-temp-file "p2s-test-ids"))
+         (p2s-save-file temp-file)
+         (p2s--loaded-save-file nil)
+         (p2s-last-post-ids nil))
+    (unwind-protect
+        (progn
+          (with-temp-file temp-file
+            (prin1 '((bsky . "at://saved")) (current-buffer)))
+          (p2s--ensure-last-post-ids-loaded)
+          (should (equal p2s-last-post-ids '((bsky . "at://saved"))))
+          ;; Not reloaded once loaded, so new IDs in memory are kept.
+          (setq p2s-last-post-ids '((bsky . "at://new")))
+          (p2s--ensure-last-post-ids-loaded)
+          (should (equal p2s-last-post-ids '((bsky . "at://new")))))
+      (delete-file temp-file))))
+
+(ert-deftest p2s-test-services-unable-to-reply ()
+  "Test detection of services that cannot reply."
+  (let ((p2s-service-reply-flags '((bsky . "-r") (toot . "--reply-last")))
+        (p2s-last-post-ids nil))
+    (should (equal (p2s--services-unable-to-reply '(bsky toot other))
+                   '(bsky other)))
+    (setq p2s-last-post-ids '((bsky . "at://x")))
+    (should (equal (p2s--services-unable-to-reply '(bsky toot other))
+                   '(other)))))
+
+(ert-deftest p2s-test-reply-without-id-is-rejected ()
+  "Test that a reply is not posted when a service has no ID to reply to."
+  (p2s-test-with-services `((bsky . ,p2s-test-ok-command)
+                            (toot . ,p2s-test-ok-command))
+    (let ((p2s-service-reply-flags '((bsky . "-r") (toot . "--reply-last")))
+          (started nil))
+      (cl-letf (((symbol-function 'start-process)
+                 (lambda (&rest _) (setq started t) nil)))
+        (should-error (p2s-post-text-to-all-services "#+REPLY: t\nhello")
+                      :type 'user-error)
+        (should-error (p2s-compose-reply) :type 'user-error))
+      (should-not started))))
 
 (provide 'p2s-test)
