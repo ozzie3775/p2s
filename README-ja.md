@@ -74,6 +74,8 @@
   ミニバッファから手軽に投稿します。
 - **`p2s-post-buffer-to-all-services` (`b`)**:
   現在のバッファ全体を投稿します。
+- **`p2s-post-below-point-to-all-services` (`f`)**:
+  カーソルのある行の次の行から、バッファの末尾までを投稿します。見出しやメモの行の下にある本文を投稿するときに便利です。
 - **`p2s-configure-services` (`c`)**:
   一時的に投稿対象のサービスを切り替えます。
 - **`p2s-reset-last-post-ids` (`C`)**:

@@ -74,6 +74,8 @@ By default, it uses `bsky` and `toot` CLI commands.
   Post directly from the minibuffer.
 - **`p2s-post-buffer-to-all-services` (`b`)**:
   Posts the entire current buffer.
+- **`p2s-post-below-point-to-all-services` (`f`)**:
+  Posts from the next line to the end of the buffer. Useful for posting the body under a heading or note line.
 - **`p2s-configure-services` (`c`)**:
   Interactively switch active services.
 - **`p2s-reset-last-post-ids` (`C`)**:

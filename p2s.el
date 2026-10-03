@@ -598,6 +598,7 @@ posts only to the failed services."
     (define-key map (kbd "p") #'p2s-compose-post)
     (define-key map (kbd "R") #'p2s-compose-reply)
     (define-key map (kbd "b") #'p2s-post-buffer-to-all-services)
+    (define-key map (kbd "f") #'p2s-post-below-point-to-all-services)
     (define-key map (kbd "c") #'p2s-configure-services)
     (define-key map (kbd "C") #'p2s-reset-last-post-ids)
     map)

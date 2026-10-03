@@ -91,6 +91,8 @@
           (p2s-setup-keybindings)
           (should (eq (lookup-key test-map (kbd "C-c p")) p2s-prefix-map))
           (should (eq (lookup-key test-map (kbd "C-c p p")) #'p2s-compose-post))
+          (should (eq (lookup-key test-map (kbd "C-c p f"))
+                      #'p2s-post-below-point-to-all-services))
           ;; Custom prefix
           (p2s-setup-keybindings "C-c s")
           (should (eq (lookup-key test-map (kbd "C-c s")) p2s-prefix-map)))
