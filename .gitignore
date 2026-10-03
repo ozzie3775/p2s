@@ -7,3 +7,8 @@ AGENTS.md
 *~
 \#*\#
 .\#*
+
+# Claude Code context files
+CLAUDE.md
+CLAUDE.local.md
+.claude/
