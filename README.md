@@ -18,8 +18,11 @@
 ```elisp
 (require 'p2s)
 
-;; Enable recommended keybindings (C-c C-p ...)
+;; Enable recommended keybindings (C-c p ...)
 (p2s-setup-keybindings)
+
+;; Or use another prefix key
+;; (p2s-setup-keybindings "C-c s")
 ```
 
 ## Configuration
@@ -49,7 +52,7 @@ By default, it uses `bsky` and `toot` CLI commands.
 
 ## Usage
 
-### Commands (prefixed by `C-c C-p`)
+### Commands (prefixed by `C-c p` by default)
 
 - **`p2s-compose-post` (`p`)**:
   Opens the `*p2s-compose*` buffer to write your post.
@@ -74,7 +77,7 @@ By default, it uses `bsky` and `toot` CLI commands.
 
 You can create threads or reply to your previous posts.
 
-1.  **Automatic**: Use `M-x p2s-compose-reply` (`C-c C-p R`). It automatically inserts `#+REPLY: t` at the top of the buffer.
+1.  **Automatic**: Use `M-x p2s-compose-reply` (`C-c p R`). It automatically inserts `#+REPLY: t` at the top of the buffer.
 2.  **Manual**: Add `#+REPLY: t` anywhere in your post content.
 
 `p2s` stores the ID/URI of the last successful post for each service in `p2s-last-post-ids`.

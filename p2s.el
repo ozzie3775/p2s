@@ -437,13 +437,13 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
   "Prefix keymap for p2s commands.")
 
 ;;;###autoload
-(defun p2s-setup-keybindings ()
-  "Setup recommended keybindings for p2s.
-By default, this binds `p2s-prefix-map' to a standard prefix.
-\\<p2s-prefix-map>"
+(defun p2s-setup-keybindings (&optional prefix)
+  "Bind `p2s-prefix-map' globally to PREFIX.
+PREFIX is a key description string for `kbd' and defaults to \"C-c p\"."
   (interactive)
-  (global-set-key (kbd "C-c C-p") p2s-prefix-map)
-  (message "p2s: Recommended keybindings are set up (C-c C-p ...)"))
+  (let ((key (or prefix "C-c p")))
+    (global-set-key (kbd key) p2s-prefix-map)
+    (message "p2s: Keybindings are set up (%s ...)" key)))
 
 (provide 'p2s)
 ;;; p2s.el ends here

@@ -74,4 +74,20 @@
       (when (file-exists-p temp-file)
         (delete-file temp-file)))))
 
+(ert-deftest p2s-test-setup-keybindings ()
+  "Test that `p2s-setup-keybindings' binds the prefix map globally."
+  (let ((orig-map (current-global-map))
+        (test-map (make-sparse-keymap)))
+    (use-global-map test-map)
+    (unwind-protect
+        (progn
+          ;; Default prefix
+          (p2s-setup-keybindings)
+          (should (eq (lookup-key test-map (kbd "C-c p")) p2s-prefix-map))
+          (should (eq (lookup-key test-map (kbd "C-c p p")) #'p2s-compose-post))
+          ;; Custom prefix
+          (p2s-setup-keybindings "C-c s")
+          (should (eq (lookup-key test-map (kbd "C-c s")) p2s-prefix-map)))
+      (use-global-map orig-map))))
+
 (provide 'p2s-test)
