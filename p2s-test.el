@@ -90,4 +90,106 @@
           (should (eq (lookup-key test-map (kbd "C-c s")) p2s-prefix-map)))
       (use-global-map orig-map))))
 
+(defmacro p2s-test-with-services (commands &rest body)
+  "Run BODY with fake services defined by COMMANDS.
+COMMANDS is an alist of (SERVICE . COMMAND-LIST)."
+  (declare (indent 1))
+  `(let* ((p2s-service-commands ,commands)
+          (p2s-services (mapcar #'car p2s-service-commands))
+          (p2s-service-image-flags nil)
+          (p2s-service-reply-flags nil)
+          (p2s-last-post-ids nil)
+          (p2s-save-file nil))
+     ,@body))
+
+(defun p2s-test-wait-for (pred)
+  "Process subprocess output until PRED returns non-nil (5 sec timeout)."
+  (with-timeout (5 (error "Timed out waiting for p2s processes"))
+    (while (not (funcall pred))
+      (accept-process-output nil 0.05))))
+
+(defconst p2s-test-ok-command
+  '("sh" "-c" "cat >/dev/null; echo '{\"id\": \"111\"}'"))
+
+(defconst p2s-test-ng-command
+  '("sh" "-c" "cat >/dev/null; echo boom; exit 1"))
+
+(ert-deftest p2s-test-post-on-done ()
+  "Test that ON-DONE receives succeeded and failed services."
+  (p2s-test-with-services `((toot . ,p2s-test-ok-command)
+                            (ng . ,p2s-test-ng-command)
+                            (missing . ("p2s-test-no-such-command")))
+    (let (result)
+      (p2s-post-text-to-all-services
+       "hello" nil (lambda (s f) (setq result (list s f))))
+      (p2s-test-wait-for (lambda () result))
+      (should (equal result '((toot) (ng missing))))
+      (should (equal (cdr (assq 'toot p2s-last-post-ids)) "111")))))
+
+(ert-deftest p2s-test-compose-finish-success ()
+  "Test that the compose buffer is cleared after a successful post."
+  (p2s-test-with-services `((ok . ,p2s-test-ok-command))
+    (let ((buf (generate-new-buffer "*p2s-test-compose*")))
+      (unwind-protect
+          (with-current-buffer buf
+            (p2s-post-mode)
+            (insert "hello")
+            (cl-letf (((symbol-function 'quit-window) #'ignore))
+              (p2s-post-mode-finish))
+            (should (buffer-live-p buf))
+            (p2s-test-wait-for (lambda () (= (buffer-size buf) 0)))
+            (should-not p2s--retry-services))
+        (kill-buffer buf)))))
+
+(ert-deftest p2s-test-compose-finish-failure-and-retry ()
+  "Test that the text is kept on failure and only failed services are retried."
+  (p2s-test-with-services `((ok . ,p2s-test-ok-command)
+                            (ng . ,p2s-test-ng-command))
+    (let ((buf (generate-new-buffer "*p2s-test-compose*"))
+          (posted nil))
+      (unwind-protect
+          (with-current-buffer buf
+            (p2s-post-mode)
+            (insert "hello")
+            (cl-letf (((symbol-function 'quit-window) #'ignore)
+                      ((symbol-function 'pop-to-buffer) #'ignore))
+              (p2s-post-mode-finish)
+              (p2s-test-wait-for (lambda () p2s--retry-services))
+              (should (equal p2s--retry-services '(ng)))
+              (should (string= (buffer-string) "hello"))
+              ;; Retry posts only to the failed service.
+              (setq p2s-service-commands `((ok . ,p2s-test-ok-command)
+                                           (ng . ,p2s-test-ok-command)))
+              (cl-letf* ((orig (symbol-function 'p2s-post-text-to-all-services))
+                         ((symbol-function 'p2s-post-text-to-all-services)
+                          (lambda (&rest args)
+                            (setq posted p2s-services)
+                            (apply orig args))))
+                (p2s-post-mode-finish))
+              (should (equal posted '(ng)))
+              (p2s-test-wait-for (lambda () (= (buffer-size) 0)))
+              (should-not p2s--retry-services)))
+        (kill-buffer buf)))))
+
+(ert-deftest p2s-test-compose-keeps-edits-made-while-posting ()
+  "Test that text edited after sending is not cleared on success."
+  (p2s-test-with-services `((ok . ,p2s-test-ok-command))
+    (let* ((buf (generate-new-buffer "*p2s-test-compose*"))
+           (done nil)
+           (orig (symbol-function 'p2s--compose-post-done)))
+      (unwind-protect
+          (with-current-buffer buf
+            (p2s-post-mode)
+            (insert "hello")
+            (cl-letf (((symbol-function 'quit-window) #'ignore)
+                      ((symbol-function 'p2s--compose-post-done)
+                       (lambda (&rest args)
+                         (apply orig args)
+                         (setq done t))))
+              (p2s-post-mode-finish)
+              (insert " next")
+              (p2s-test-wait-for (lambda () done)))
+            (should (string= (buffer-string) "hello next")))
+        (kill-buffer buf)))))
+
 (provide 'p2s-test)

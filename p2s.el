@@ -197,70 +197,95 @@ PROCESS is the process, EVENT is the event string.
 SERVICE is the symbol of the service.
 SUCCESS-CALLBACK is called with (service output) on success.
 FAILURE-CALLBACK is called with (service event output) on failure."
-  (let ((buf (process-buffer process)))
-    (when (buffer-live-p buf)
-      (with-current-buffer buf
-        (let ((output (buffer-string)))
-          (cond
-           ((and (string-match-p "finished" event)
-                 (zerop (process-exit-status process)))
-            (funcall success-callback service output))
-           ((string-match-p "finished\\|exited\\|error" event)
-            (funcall failure-callback service event output))))))))
+  (let* ((buf (process-buffer process))
+         (output (if (buffer-live-p buf)
+                     (with-current-buffer buf (buffer-string))
+                   "")))
+    (pcase (process-status process)
+      ('exit
+       (if (zerop (process-exit-status process))
+           (funcall success-callback service output)
+         (funcall failure-callback service event output)))
+      ('signal
+       (funcall failure-callback service event output)))))
 
 ;;;###autoload
-(defun p2s-post-text-to-all-services (text &optional images)
+(defun p2s-post-text-to-all-services (text &optional images on-done)
   "Post TEXT to all services defined in `p2s-services'.
 Optional IMAGES is a list of file paths to attach.
 If TEXT contains #+IMAGE: lines, they are extracted and added to IMAGES.
-If TEXT contains #+REPLY: t, it will reply to the last post if available."
+If TEXT contains #+REPLY: t, it will reply to the last post if available.
+Optional ON-DONE is called with (SUCCEEDED FAILED) after every service
+has finished, where both are lists of service symbols."
   (pcase-let* ((`(,clean-text ,extracted-images ,is-reply) (p2s--parse-post-content text))
                (all-images (append images extracted-images))
-               (success-count 0)
-               (total-services (length p2s-services)))
+               (services p2s-services)
+               (total-services (length services))
+               (succeeded nil)
+               (failed nil))
 
     (when (string-blank-p clean-text)
       (user-error "Content is empty, nothing to post"))
 
     (p2s-check-length clean-text)
 
-    (dolist (service p2s-services)
-      (let* ((svc service)
-             (command (p2s--build-command svc all-images is-reply))
-             (process-connection-type nil)
-             (proc-name (format "p2s-%s-process" svc))
-             (buffer-name (format " *p2s-%s-output*" svc)))
+    (cl-flet ((finish (svc ok)
+                (if ok (push svc succeeded) (push svc failed))
+                (when (and on-done
+                           (= (+ (length succeeded) (length failed)) total-services))
+                  (funcall on-done
+                           (cl-remove-if-not (lambda (s) (memq s succeeded)) services)
+                           (cl-remove-if-not (lambda (s) (memq s failed)) services)))))
+      (message "p2s: Sending post to %d services..." total-services)
+      (dolist (service services)
+        (let* ((svc service)
+               (command (p2s--build-command svc all-images is-reply))
+               (process-connection-type nil)
+               (proc-name (format "p2s-%s-process" svc))
+               (buffer-name (format " *p2s-%s-output*" svc)))
 
-        (if (not command)
-            (message "p2s: Unknown or misconfigured service: %s" svc)
-          (with-current-buffer (get-buffer-create buffer-name)
-            (erase-buffer))
-          (let ((proc (apply #'start-process proc-name buffer-name command)))
+          (if (not command)
+              (progn
+                (message "p2s: Unknown or misconfigured service: %s" svc)
+                (finish svc nil))
+            (with-current-buffer (get-buffer-create buffer-name)
+              (erase-buffer))
             (message "p2s: [%s] Executing: %s" svc (mapconcat #'identity command " "))
-            (process-send-string proc clean-text)
-            (process-send-eof proc)
-            (set-process-sentinel
-             proc
-             (lambda (p e)
-               (p2s--post-sentinel
-                p e svc
-                (lambda (s out)
-                  (cl-incf success-count)
-                  (let ((id (p2s--extract-id s out)))
-                    (if id
-                        (progn
-                          (setq p2s-last-post-ids
-                                (cons (cons s id)
-                                      (cl-remove s p2s-last-post-ids :key #'car)))
-                          (p2s-save-last-post-ids)
-                          (message "p2s: [%s] Successfully extracted and stored ID: %s" s id))
-                      (message "p2s: [%s] Warning: Could not extract post ID from output\nOutput: %s" s out)))
-                  (message "p2s: [%s] Posted successfully (%d/%d)" s success-count total-services)
-                  (when (= success-count total-services)
-                    (message "p2s: Successfully posted to all %d services" total-services)))
-                (lambda (s ev out)
-                  (message "p2s: [%s] Failed: %s\nOutput: %s" s (string-trim ev) (string-trim out))))))))))
-    (message "p2s: Sending post to %d services..." (length p2s-services))))
+            (let ((proc (condition-case err
+                            (apply #'start-process proc-name buffer-name command)
+                          (error
+                           (message "p2s: [%s] Failed to start: %s" svc (error-message-string err))
+                           (finish svc nil)
+                           nil))))
+              (when proc
+                (set-process-sentinel
+                 proc
+                 (lambda (p e)
+                   (p2s--post-sentinel
+                    p e svc
+                    (lambda (s out)
+                      (let ((id (p2s--extract-id s out)))
+                        (if id
+                            (progn
+                              (setq p2s-last-post-ids
+                                    (cons (cons s id)
+                                          (cl-remove s p2s-last-post-ids :key #'car)))
+                              (p2s-save-last-post-ids)
+                              (message "p2s: [%s] Successfully extracted and stored ID: %s" s id))
+                          (message "p2s: [%s] Warning: Could not extract post ID from output\nOutput: %s" s out)))
+                      (message "p2s: [%s] Posted successfully (%d/%d)"
+                               s (1+ (length succeeded)) total-services)
+                      (when (= (1+ (length succeeded)) total-services)
+                        (message "p2s: Successfully posted to all %d services" total-services))
+                      (finish s t))
+                    (lambda (s ev out)
+                      (message "p2s: [%s] Failed: %s\nOutput: %s" s (string-trim ev) (string-trim out))
+                      (finish s nil)))))
+                ;; If the process dies early, sending fails; the sentinel
+                ;; reports that failure, so it is not handled here.
+                (ignore-errors
+                  (process-send-string proc clean-text)
+                  (process-send-eof proc))))))))))
 
 ;;;###autoload
 (defun p2s-post-region-to-all-services (begin end)
@@ -297,6 +322,10 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
       (unless (bolp) (insert "\n"))
       (insert (format "#+IMAGE: %s\n" (expand-file-name file))))))
 
+(defvar-local p2s--retry-services nil
+  "Services that failed on the last post from this compose buffer.
+When non-nil, `p2s-post-mode-finish' posts only to these services.")
+
 (defun p2s--update-header-line ()
   "Update the header line with character count."
   (let* ((text (buffer-substring-no-properties (point-min) (point-max))))
@@ -311,7 +340,11 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
                (propertize (format "Length: %d/%d" len limit)
                            'face `(:foreground ,color :weight bold))
                (when is-reply
-                 (propertize " [REPLY MODE]" 'face '(:foreground "orange" :weight bold)))))))))
+                 (propertize " [REPLY MODE]" 'face '(:foreground "orange" :weight bold)))
+               (when p2s--retry-services
+                 (propertize (format " [RETRY: %s]"
+                                     (mapconcat #'symbol-name p2s--retry-services ", "))
+                             'face '(:foreground "red" :weight bold)))))))))
 
 (define-derived-mode p2s-post-mode text-mode "p2s-post"
   "Major mode for composing a post to multiple SNS services.
@@ -355,13 +388,45 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
       (when tool
         (message "p2s: No image in clipboard")))))
 
+(defun p2s--compose-post-done (buf tick succeeded failed)
+  "Handle the result of a post sent from the compose buffer BUF.
+TICK is the value of `buffer-chars-modified-tick' when the post was sent.
+SUCCEEDED and FAILED are lists of service symbols.
+On success, clear BUF unless it was edited after sending.
+On failure, keep the text and show BUF so the failed services can be retried."
+  (when (buffer-live-p buf)
+    (with-current-buffer buf
+      (if failed
+          (progn
+            (setq p2s--retry-services failed)
+            (p2s--update-header-line)
+            (pop-to-buffer buf)
+            (message "p2s: Failed to post to %s%s.  Press C-c C-c to retry them"
+                     (mapconcat #'symbol-name failed ", ")
+                     (if succeeded
+                         (format " (posted to %s)"
+                                 (mapconcat #'symbol-name succeeded ", "))
+                       "")))
+        (setq p2s--retry-services nil)
+        (when (= tick (buffer-chars-modified-tick))
+          (erase-buffer)
+          (set-buffer-modified-p nil))))))
+
 (defun p2s-post-mode-finish ()
-  "Finish editing and post the content."
+  "Post the content and hide the compose buffer.
+The buffer is kept until every service has finished.  If any service
+fails, the buffer is shown again and the next \\[p2s-post-mode-finish]
+posts only to the failed services."
   (interactive)
-  (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-    (p2s-post-text-to-all-services text)
-    (set-buffer-modified-p nil)
-    (quit-window t)))
+  (let ((buf (current-buffer))
+        (text (buffer-substring-no-properties (point-min) (point-max)))
+        (tick (buffer-chars-modified-tick)))
+    (let ((p2s-services (or p2s--retry-services p2s-services)))
+      (p2s-post-text-to-all-services
+       text nil
+       (lambda (succeeded failed)
+         (p2s--compose-post-done buf tick succeeded failed))))
+    (quit-window)))
 
 (defun p2s-post-mode-cancel ()
   "Cancel editing and discard the buffer."
@@ -383,6 +448,7 @@ If TEXT contains #+REPLY: t, it will reply to the last post if available."
       (when (and (> (buffer-size) 0)
                  (yes-or-no-p "Clear existing content in *p2s-compose*? "))
         (erase-buffer)
+        (setq p2s--retry-services nil)
         (set-buffer-modified-p nil)))
     (switch-to-buffer-other-window buf)))
 

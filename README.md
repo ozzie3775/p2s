@@ -56,7 +56,7 @@ By default, it uses `bsky` and `toot` CLI commands.
 
 - **`p2s-compose-post` (`p`)**:
   Opens the `*p2s-compose*` buffer to write your post.
-  - `C-c C-c`: Post and close the window.
+  - `C-c C-c`: Post and close the window. If posting to any service fails, the buffer reappears with your text intact, and pressing `C-c C-c` again retries only the failed services.
   - `C-c C-k`: Cancel and close the window.
   - `C-c C-a`: Attach an image file.
   - `C-c C-y`: Attach an image from the clipboard.
